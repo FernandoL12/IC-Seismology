@@ -316,7 +316,7 @@ def assembly_off(results):
     Mcorr[:,:] = np.nan
     for r in results:
         # ~ print("i=",r.i, "j=", r.j)
-        Mcorr[r.i][r.j] = r.OFFSET_CORR
+        Mcorr[r.i][r.j] = -r.OFFSET_CORR
    
     for i in range(size):
         for j in range(size):
@@ -359,21 +359,21 @@ def plot_matrix(corr_M, ev_id, correct=False, figsize=(7,6), cmap=plt.cm.RdYlGn)
         ax.set_title(f'Correlation matrix (corrected)\nStation code: {station} | Nº of events: {size}', fontsize=15)
     else:
         ax.set_title(f'Correlation matrix\nStation code: {station} | Nº of events: {size}', fontsize=15)
-    ax.tick_params(axis="x", rotation=20, labelsize=12)
-    ax.tick_params(axis="y", labelsize=12)
+    ax.tick_params(axis="x", labelsize=12, rotation=20)
+    ax.tick_params(axis="y", labelsize=12) #, rotation=90
     
     plt.tight_layout()
     plt.savefig("matrix-corr.png")
 
 
 #   4.2) Plot graphs
-def plot_graph(results, ncols=5, figsize=(30,10)):
+def plot_graph(results, pre, ncols=5, figsize=(30,10)): # ncol=5, figsize=(12,8)
     """
     dict, int, tuple --> graph
     
     Plota os gráficos das formas de ondas sobrepostas pós correlação
     """
-    
+
     # O número de gráficos deve ser igual ao número de correções que foram feitas
     total_de_graficos = len([r.corr for r in results])
     
@@ -410,20 +410,30 @@ def plot_graph(results, ncols=5, figsize=(30,10)):
             X1 = Y1.times()
             Y1 = Y1.data / np.max(Y1.data)
             
-            image.plot(X1, Y1, color='darkorange', label=f'{title[:11]}')
+            image.plot(X1, Y1, color='#F97306', ls='--', label=f'{title[:11]} (1)')
             
             # Plotando o 2o evento
             Y2 = [r.data2 for r in results][cont]
             X2 = Y2.times() 
             Y2 = Y2.data / np.max(Y2.data)
     
-            image.plot(X2, Y2, 'b--', label=f'{title[14:]}')
+            image.plot(X2, Y2, color='C0', label=f'{title[16:]} (2)')
     
             # Configurando o gráfico
-            image.set_title(title, fontsize=14)
-            image.set_xlim(0.0,2.5)
+            image.set_title("After P pick correction", fontsize=14)
+            
+            mmin = min(X1)
+            mmax = max(X1)
+            mmin -= abs(0.04 * (mmax-mmin))
+            mmax += abs(0.04 * (mmax-mmin))
+            image.set_xlim((mmin, mmax))
+            image.set_ylim(ymin=-2)
+            off = [r.OFFSET_CORR for r in results][cont]
+            image.axvline(pre, 0.05, 0.50, color ='C0', label='P pick (1)', lw=2)
+            image.axvline(pre - off, 0.55, 0.95, color ='#F97306', label='P pick (2) | Original', lw=2)
+            image.axvline(pre, color ='limegreen', label='P pick (2) | Corrected', ls='--', lw=1)
             image.grid(alpha=0.25)
-            image.legend(fontsize=12)
+            image.legend(fontsize=12, loc=4, ncols = 2)
             cont += 1
             
             if cont == total_de_graficos:
@@ -434,7 +444,7 @@ def plot_graph(results, ncols=5, figsize=(30,10)):
     plt.savefig("all-graphs.png")
     
 
-def plot_offset(off_M, ev_id, figsize=(7,6), cmap=plt.cm.RdYlGn):
+def plot_offset(off_M, ev_id, figsize=(4,3.4), cmap=plt.cm.seismic_r):
     """
     matrix, list, tuple, string --> heatmap
     
@@ -461,10 +471,10 @@ def plot_offset(off_M, ev_id, figsize=(7,6), cmap=plt.cm.RdYlGn):
         cbar_kws={'label': 'Offset'}
         )
     
-    ax.figure.axes[-1].yaxis.label.set_size(12)
-    ax.set_title(f'OFFSETS\nStation code: {station} | Nº of events: {size}', fontsize=15)
-    ax.tick_params(axis="x", rotation=20, labelsize=12)
-    ax.tick_params(axis="y", labelsize=12)
+    ax.figure.axes[-1].yaxis.label.set_size(7.6)
+    ax.set_title(f'OFFSETS\nStation code: {station} | Nº of events: {size}', fontsize=8)
+    ax.tick_params(axis="x", labelsize=7.6, rotation=20)
+    ax.tick_params(axis="y", labelsize=7.6, rotation=90)
     
     plt.tight_layout()
     plt.savefig("matrix-off.png")
@@ -520,7 +530,7 @@ def plot_all(results, i, j):
     offcorr = (r.t1-r.s1)-(r.t2-r.s2)
     ax3.plot(r.lags * dt - offcorr, N(r.corr), '.', color='red')
     ax3.plot(r.lags * dt - offcorr, N(r.corr), color='red', lw=0.5)
-    ax3.axvline( - r.OFFSET_CORR, color ='limegreen', label=f'Lag ({ - r.OFFSET_CORR:.2f})')
+    ax3.axvline(- r.OFFSET_CORR, color ='limegreen', label=f'Lag ({- r.OFFSET_CORR:.2f})')
     ax3.grid(alpha=0.4)
 
     ax3.set_title("Correlation lag", fontsize=16)
@@ -585,11 +595,12 @@ if __name__ == '__main__':
                           
 
     
-    plot_graph(results)
+    
     # Plot results
     ## 1) Correlation matrix
     Mcorr = assembly_matrix(results)
     plot_matrix(Mcorr, events, correct)
+    plot_graph(results, pre)
     ## 2) Plot waveforms superposed
     
     ## 3) Print offset matrix
