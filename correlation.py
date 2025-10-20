@@ -74,7 +74,7 @@ def cmdline():
 #   2.1) Get phase time pick and waveform_id.id (net, sta, loc, chan)
 def evpicks(evid, phases = ['P'], station = None, client = 'http://10.110.0.135:18003'):
     '''
-    str, str (default=SeisVL) list['str'] --> str, float
+    str, str (default=SeisVL) list['str'] --> str, UTCDateTime
 
     Connect to SeisVL and get the event corresponded to ID given.
     After that, gets the first event preferred origin and it's arrivals and
@@ -147,21 +147,41 @@ def evtrace(sta, tp, t0, t1, fmin = 2.0, fmax = 10.0, margin = 2.0, client = Non
 
 
 ## 3) Processing _______________________________________________________
+
 #   3.1) Pick correction function
-def Ppick_cc(trace1, trace2):
+def Ppick_cc(trace1, trace2, t1, t2):
     """
-    Trace, Trace, float --> list, list, float
+    Trace, Trace, UTCDateTime, UTCDateTime  --> 2x list, 4x float
 
     Utilizes cross-correlation between two given traces to 
     correct P phase pick.
     """
     
+    # 1) Data extraction
     dt = trace1.stats.delta
+    rs1 = trace1.times('utcdatetime')[0]
+    rs2 = trace2.times('utcdatetime')[0]
+    
+    # 2) Correlation, lag
     corr = correlate(trace1.data, trace2.data, mode='valid')
     lags = correlation_lags(len(trace1.data), len(trace2.data), mode='valid')
-    OFFSET = lags[corr.argmax()] * dt
     
-    return corr, lags, OFFSET
+    # 3) Polynomial adjust 
+    index = np.argmax(corr)
+    
+    lag_3     = lags[index-1:index+2]
+    corr3     = corr[index-1:index+2]
+    a,b,c     = np.polyfit(lag_3*dt, corr3, deg=2)
+    x         = -b/(2*a)
+    lag_maxi  = x
+    corr_maxi = a*x**2 + b*x + c
+    
+    # 4) Offset correction
+    OFFSET = (t1 - rs1) - (t2 - rs2 + lag_maxi)
+    
+
+    
+    return corr, lags, lag_maxi, corr_maxi, OFFSET
 
 
 #   3.2) Trim data with the same amount of samples needed
@@ -241,7 +261,6 @@ def corr_matrix(ev_id, station, phase, fmin, fmax,
             s2, t2 = evpicks(ev_id[j], phases=phase, client = cl_e, station = station)[0]
             data2 = evtrace(station, t2, t2-start2, t2+end2, fmin, fmax, client = cl_d)
 
-            OFFSET_CORR = 0.0
             OFFSET= 0.0
             rs1=0.0
             rs2=0.0
@@ -249,33 +268,31 @@ def corr_matrix(ev_id, station, phase, fmin, fmax,
             corr = None
 
             if correction:
-                corr, lags, OFFSET = Ppick_cc(data1, data2)
+                corr, lags, lag_maxi, corr_maxi, OFFSET = Ppick_cc(data1, data2, t1, t2)
                 FACTOR1 = 1/np.max(data1.data)
                 FACTOR2 = 1/np.max(data2.data)
-                rs1 = data1.times('utcdatetime')[0]
-                rs2 = data2.times('utcdatetime')[0]
-                OFFSET_CORR = (t1 - rs1) - (t2 - rs2 + OFFSET)
-
+                
             data1 = npts_cut(data1, t0 = t1 - start1, length = (start1 + end1))
-            data2 = npts_cut(data2, t0 = t2 - start1 + OFFSET_CORR, npts = data1.stats.npts)
+            data2 = npts_cut(data2, t0 = t2 - start1 + OFFSET, npts = data1.stats.npts)
 
             #print(f"Append i= {i} j={j} evA={ev_id[i]} evB={ev_id[j]} OFFSET={OFFSET:+5.2f} OFFSET_COR={OFFSET_CORR:+5.2f} {'!' if OFFSET_CORR > maxshift else ''}")
 
             results.append(AttribDict({
-                'i': i,
-                'j': j,
+                'i'    : i,
+                'j'    : j,
                 'data1': data1,
                 'data2': data2,
-                'lags': lags,
-                'corr': corr,
-                'OFFSET': OFFSET,
-                'OFFSET_CORR': np.round(OFFSET_CORR, decimals=2),
+                'lags' : lags,
+                'corr' : corr,
+                'lag_maxi'   : lag_maxi,
+                'corr_maxi'  : corr_maxi,
+                'OFFSET'     : np.round(OFFSET, decimals=2),
                 'sta1':s1,
                 'sta2':s2,
-                't1':t1,
-                't2':t2,
-                's1': rs1,
-                's2': rs2,
+                't1'  :t1,
+                't2'  :t2,
+                's1'  : rs1,
+                's2'  : rs2,
                 'eid1': ev_id[i],
                 'eid2': ev_id[j],
                 'M': np.abs(np.corrcoef(data1.data, data2.data)[0][1])
@@ -316,7 +333,7 @@ def assembly_off(results):
     Mcorr[:,:] = np.nan
     for r in results:
         # ~ print("i=",r.i, "j=", r.j)
-        Mcorr[r.i][r.j] = -r.OFFSET_CORR
+        Mcorr[r.i][r.j] = -r.OFFSET
    
     for i in range(size):
         for j in range(size):
@@ -428,7 +445,7 @@ def plot_graph(results, pre, ncols=5, figsize=(30,10)): # ncol=5, figsize=(12,8)
             mmax += abs(0.04 * (mmax-mmin))
             image.set_xlim((mmin, mmax))
             image.set_ylim(ymin=-2)
-            off = [r.OFFSET_CORR for r in results][cont]
+            off = [r.OFFSET for r in results][cont]
             image.axvline(pre, 0.05, 0.50, color ='C0', label='P pick (1)', lw=2)
             image.axvline(pre - off, 0.55, 0.95, color ='#F97306', label='P pick (2) | Original', lw=2)
             image.axvline(pre, color ='limegreen', label='P pick (2) | Corrected', ls='--', lw=1)
@@ -498,13 +515,13 @@ def plot_all(results, i, j):
     ax3 = fig.add_subplot(gs[1, :])
 
     ax1.set_title(f"Before correlation\n|{r.eid1} -x- {r.eid2}|", fontsize=16) 
-    ax1.plot(r.data1.times('utcdatetime') - r.t1, N(r.data1.data), color ='C0', label='Event 1')
     ax1.plot(r.data2.times('utcdatetime') - r.t2, N(r.data2.data), "--", color='#F97306', label='Event 2')
+    ax1.plot(r.data1.times('utcdatetime') - r.t1, N(r.data1.data), color ='C0', label='Event 1')
     ax1.axvline(0.0, 0.05, 0.50, color ='C0', label='P pick (1)', lw=2)
     ax1.axvline(0.0, 0.55, 0.95, color ='#F97306', label='P pick (2)', lw=2)
     
-    mmin = min(r.data1.times('utcdatetime') - r.t1)
-    mmax = max(r.data1.times('utcdatetime') - r.t1)
+    mmin  = min(r.data1.times('utcdatetime') - r.t1)
+    mmax  = max(r.data1.times('utcdatetime') - r.t1)
     mmin -= abs(0.02 * (mmax-mmin))
     mmax += abs(0.02 * (mmax-mmin))
     ax1.set_xlim((mmin, mmax))
@@ -515,22 +532,20 @@ def plot_all(results, i, j):
     ax1.legend(loc=4, ncols = 2)
 
     ax2.set_title(f"After correlation\n|{r.eid1} -x- {r.eid2}|", fontsize=16) 
-    ax2.plot(r.data2.times('utcdatetime') - r.t2 - r.OFFSET_CORR, N(r.data2.data), "--", color='#F97306', label='Event 2')
-    ax2.axvline(- r.OFFSET_CORR, 0.55, 0.95, color ='#F97306', label='P pick (2) | Original', lw=2)
+    ax2.plot(r.data2.times('utcdatetime') - r.t2 - r.OFFSET, N(r.data2.data), "--", color='#F97306', label='Event 2')
+    ax2.axvline(- r.OFFSET, 0.55, 0.95, color ='#F97306', label='P pick (2) | Original', lw=2)
     ax2.axvline(0.0, color ='limegreen', label='P pick (2) | Corrected', ls='--', lw=1)
     ax2.plot(r.data1.times('utcdatetime') - r.t1, N(r.data1.data), color ='C0', label='Event 1')
     ax2.axvline(0.0, 0.05, 0.50, color ='C0', label='P pick (1)', lw=2)
     ax2.set_xlim((mmin, mmax))
     ax2.set_xlabel(f"Time relative to trace start time (s)\n\n", fontsize=14)
-    # ~ ax2.set_ylabel("Normalized amplitude", fontsize=14)
     ax2.grid(alpha=0.4)
     ax2.legend(loc=4, ncols = 2)
 
     dt = r.data1.stats.delta
-    offcorr = (r.t1-r.s1)-(r.t2-r.s2)
-    ax3.plot(r.lags * dt - offcorr, N(r.corr), '.', color='red')
-    ax3.plot(r.lags * dt - offcorr, N(r.corr), color='red', lw=0.5)
-    ax3.axvline(- r.OFFSET_CORR, color ='limegreen', label=f'Lag ({- r.OFFSET_CORR:.2f})')
+    ax3.plot(r.lags * dt, N(r.corr), '.', color='red')
+    ax3.plot(r.lags * dt, N(r.corr), color='red', lw=0.5)
+    ax3.axvline(r.lag_maxi, color ='limegreen', label=f'Lag ({- r.lag_maxi:.2f})')
     ax3.grid(alpha=0.4)
 
     ax3.set_title("Correlation lag", fontsize=16)
@@ -605,12 +620,12 @@ if __name__ == '__main__':
     
     ## 3) Print offset matrix
     if correct:
-        off_corr = [r.OFFSET_CORR for r in results]
+        offset = [r.OFFSET for r in results]
         off_M = assembly_off(results)
         plot_offset(off_M, events)
         plot_all(results,"val2025gmvf", "val2025gmvl")
         # Print lags individualy
-        for item in off_corr:
+        for item in offset:
             print(f'{item:+.2f} s')
     
     
