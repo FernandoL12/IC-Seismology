@@ -146,6 +146,46 @@ def evtrace(sta, tp, t0, t1, fmin = 2.0, fmax = 10.0, margin = 2.0, client = Non
     return trace
 
 
+#   2.3) Get event ID based on a period of time
+def get_event_by_data(start, stop)
+    '''
+    UTCDateTime, UTCDateTime --> list[str]
+    
+    Gets the events' ID from a given data period.
+    To avoid bad request because of too much data,
+    the code pull events monthly.
+    '''
+    
+    C = Client("http://10.110.0.135:18003")
+
+    start = utc(start) # "2015-01-01T00:00:00"
+    end   = utc(stop)  # "2025-01-01T00:00:00"
+    stop = start + 30*24*60*60
+
+    while stop < end:
+        all_events = C.get_events(starttime=start, endtime=stop, minlatitude=None, maxlatitude=None, minlongitude=None,
+                             maxlongitude=None, minmagnitude=0, includearrivals=True)
+        for E in all_events:
+            if E.event_type == "induced or triggered event":
+                IQ_events.append(E)
+
+        if stop+30*24*60*60 >= end:
+            all_events = C.get_events(starttime=stop, endtime=end, minlatitude=None, maxlatitude=None, minlongitude=None,
+                                 maxlongitude=None, minmagnitude=0, includearrivals=True)
+            for E in all_events:
+                if E.event_type == "induced or triggered event":
+                    IQ_events.append(E)
+            break
+
+        start = stop
+        stop+=30*24*60*60
+
+    for i in IQ_events:
+        ev_ids.append(str(i.resource_id)[30:])
+    
+    return ev_ids
+    
+
 ## 3) Processing _______________________________________________________
 
 #   3.1) Pick correction function
@@ -286,7 +326,8 @@ def corr_matrix(ev_id, station, phase, fmin, fmax,
                 'corr' : corr,
                 'lag_maxi'   : lag_maxi,
                 'corr_maxi'  : corr_maxi,
-                'OFFSET'     : np.round(OFFSET, decimals=2),
+                'OFFSET'     : OFFSET,
+                'OFFSET2'     : np.round(OFFSET, decimals=2),
                 'sta1':s1,
                 'sta2':s2,
                 't1'  :t1,
@@ -333,7 +374,7 @@ def assembly_off(results):
     Mcorr[:,:] = np.nan
     for r in results:
         # ~ print("i=",r.i, "j=", r.j)
-        Mcorr[r.i][r.j] = -r.OFFSET
+        Mcorr[r.i][r.j] = - np.round(r.OFFSET, decimals=2)
    
     for i in range(size):
         for j in range(size):
@@ -543,9 +584,9 @@ def plot_all(results, i, j):
     ax2.legend(loc=4, ncols = 2)
 
     dt = r.data1.stats.delta
-    ax3.plot(r.lags * dt, N(r.corr), '.', color='red')
-    ax3.plot(r.lags * dt, N(r.corr), color='red', lw=0.5)
-    ax3.axvline(r.lag_maxi, color ='limegreen', label=f'Lag ({- r.lag_maxi:.2f})')
+    ax3.plot(r.lags * dt - r.OFFSET, N(r.corr), '.', color='red')
+    ax3.plot(r.lags * dt - r.OFFSET, N(r.corr), color='red', lw=0.5)
+    ax3.axvline(r.lag_maxi - r.OFFSET, color ='limegreen', label=f'Lag ({r.lag_maxi - r.OFFSET:.3f})')
     ax3.grid(alpha=0.4)
 
     ax3.set_title("Correlation lag", fontsize=16)
@@ -559,7 +600,7 @@ def plot_all(results, i, j):
 
 
 ######################################################################################################
-## Código Principal
+##  Código Principal                                                                                ##
 ######################################################################################################
 if __name__ == '__main__':
     # 1) Call arguments
