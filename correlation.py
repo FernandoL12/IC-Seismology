@@ -147,7 +147,7 @@ def evtrace(sta, tp, t0, t1, fmin = 2.0, fmax = 10.0, margin = 2.0, client = Non
 
 
 #   2.3) Get event ID based on a period of time
-def get_event_by_data(start, stop)
+def get_event_by_data(start, stop):
     '''
     UTCDateTime, UTCDateTime --> list[str]
     
@@ -156,12 +156,13 @@ def get_event_by_data(start, stop)
     the code pull events monthly.
     '''
     
-    C = Client("http://10.110.0.135:18003")
+    C = fdsn.Client("http://10.110.0.135:18003")
 
-    start = utc(start) # "2015-01-01T00:00:00"
-    end   = utc(stop)  # "2025-01-01T00:00:00"
+    start = UTCDateTime(start) # "2015-01-01T00:00:00"
+    end   = UTCDateTime(stop)  # "2025-01-01T00:00:00"
     stop = start + 30*24*60*60
-
+    
+    IQ_events = []
     while stop < end:
         all_events = C.get_events(starttime=start, endtime=stop, minlatitude=None, maxlatitude=None, minlongitude=None,
                              maxlongitude=None, minmagnitude=0, includearrivals=True)
@@ -180,8 +181,10 @@ def get_event_by_data(start, stop)
         start = stop
         stop+=30*24*60*60
 
+    ev_ids = []
     for i in IQ_events:
         ev_ids.append(str(i.resource_id)[30:])
+    ev_ids.sort()
     
     return ev_ids
     
@@ -250,7 +253,7 @@ def npts_cut(tr, t0, length = 2, npts = None):
     return trc
 
 
-# 3.3) Builds post correlation correction matrix
+#   3.3) Builds post correlation correction matrix
 def corr_matrix(ev_id, station, phase, fmin, fmax,
                 start1, start2, end1, end2,  maxshift, 
                 correction, cl_e, cl_d):
@@ -327,7 +330,7 @@ def corr_matrix(ev_id, station, phase, fmin, fmax,
                 'lag_maxi'   : lag_maxi,
                 'corr_maxi'  : corr_maxi,
                 'OFFSET'     : OFFSET,
-                'OFFSET2'     : np.round(OFFSET, decimals=2),
+                'OFFSET2'    : np.round(OFFSET, decimals=2),
                 'sta1':s1,
                 'sta2':s2,
                 't1'  :t1,
@@ -341,7 +344,7 @@ def corr_matrix(ev_id, station, phase, fmin, fmax,
 
     return results
 
-# 3.4)
+#   3.4) creates correlation matriz
 def assembly_matrix(results):
     """
     list --> matrix
@@ -362,7 +365,7 @@ def assembly_matrix(results):
 
     return Mcorr
 
-
+#   3.5) creates offset matriz
 def assembly_off(results):
     """
     list --> matriz
@@ -374,13 +377,34 @@ def assembly_off(results):
     Mcorr[:,:] = np.nan
     for r in results:
         # ~ print("i=",r.i, "j=", r.j)
-        Mcorr[r.i][r.j] = - np.round(r.OFFSET, decimals=2)
+        Mcorr[r.i][r.j] = - np.round(r.OFFSET, decimals=2) #IMPORTANT
    
     for i in range(size):
         for j in range(size):
             if j>i: Mcorr[j][i] = np.nan
 
     return Mcorr
+
+
+#   3.6) Sort values in descending order
+def sort_des(results):
+    """
+    dict --> list
+    
+    Sort values in descending order. Returns a list that 
+    """
+    
+    # Getting data
+    id1     = [ r.eid1 for r in results ]
+    id2     = [ r.eid2 for r in results ]
+    lag_maxi     = [ r.lag_maxi for r in results ]
+    corr_norm    = [ r.M for r in results ]
+    
+    # Combining and Sorting data
+    info_list = list(zip(np.round(corr_norm, decimals=2), np.round(lag_maxi, decimals=3), id1, id2))
+    sorted_list = sorted(info_list, reverse=True)
+    
+    return sorted_list    
 
 
 ## 4) Visualização _____________________________________________________
@@ -501,7 +525,7 @@ def plot_graph(results, pre, ncols=5, figsize=(30,10)): # ncol=5, figsize=(12,8)
     
     plt.savefig("all-graphs.png")
     
-
+#   4.3) Plot offsets
 def plot_offset(off_M, ev_id, figsize=(4,3.4), cmap=plt.cm.seismic_r):
     """
     matrix, list, tuple, string --> heatmap
@@ -537,7 +561,7 @@ def plot_offset(off_M, ev_id, figsize=(4,3.4), cmap=plt.cm.seismic_r):
     plt.tight_layout()
     plt.savefig("matrix-off.png")
 
-
+#   4.4) Plot processing process' visualization
 def plot_all(results, i, j):
     def N(data):
         return data / np.max(data)
@@ -643,37 +667,60 @@ if __name__ == '__main__':
                           cl_e = client_event, cl_d = client_data)
 
     elif phase == "S":
-        results=corr_matrix(ev_id, station, t0=0, phase=phase, fmin=fmin,
+        results=corr_matrix(events, station, t0=0, phase=phase, fmin=fmin,
                           fmax=fmax, start1=pre, start2=pre, 
                           end1=pos, end2=pos+2*shiftmargin,
                           maxshift=pre + 4*shiftmargin, n_samples=200,
                           correction=correct)
-                          
 
-    
-    
     # Plot results
     ## 1) Correlation matrix
     Mcorr = assembly_matrix(results)
     plot_matrix(Mcorr, events, correct)
     plot_graph(results, pre)
-    ## 2) Plot waveforms superposed
     
-    ## 3) Print offset matrix
+    ## 2) Print offset matrix
     if correct:
         offset = [r.OFFSET for r in results]
         off_M = assembly_off(results)
         plot_offset(off_M, events)
         plot_all(results,"val2025gmvf", "val2025gmvl")
         # Print lags individualy
-        for item in offset:
-            print(f'{item:+.2f} s')
+        #for item in offset:
+           # print(f'{item:+.2f} s')
+        # Print sorted data
+        sort_list = sort_des(results)
+        print(*sort_list, sep='\n')
     
+    ## Test - Event by data
+    ev_ids = get_event_by_data("2023-01-01T00:00:00", "2025-01-01T00:00:00")
+    if phase == "P":
+        results=corr_matrix(ev_ids, station, phase=phase, fmin=fmin,
+                          fmax=fmax,start1=pre, start2=pre+corr_shift,
+                          end1=pos, end2=pos + corr_shift,
+                          maxshift = corr_shift,
+                          correction = correct,
+                          cl_e = client_event, cl_d = client_data)
+
+    sort_list = sort_des(results)
+    print(*sort_list, sep='\n')
     
+    Mcorr = assembly_matrix(results)
+    plot_matrix(Mcorr, events, correct)
+    plot_graph(results, pre)
     
-    
-    
-    
+    if correct:
+        offset = [r.OFFSET for r in results]
+        off_M = assembly_off(results)
+        plot_offset(off_M, events)
+        plot_all(results,"val2025gmvf", "val2025gmvl")
+        # Print lags individualy
+        #for item in offset:
+           # print(f'{item:+.2f} s')
+        # Print sorted data
+        
+        
+    ## End of Test
     
     
     
