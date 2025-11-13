@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 ###############################
-### The CC correlation code ###
+### Cross-Correlation Code ###
 ###############################
 
 ## Libraries
