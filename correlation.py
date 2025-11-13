@@ -684,10 +684,14 @@ if __name__ == '__main__':
         offset = [r.OFFSET for r in results]
         off_M = assembly_off(results)
         plot_offset(off_M, events)
-        plot_all(results,"val2025gmvf", "val2025gmvl")
+        
+        # To plot processing steps ->
+        #plot_all(results,"val2025gmvf", "val2025gmvl")
+        
         # Print lags individualy
         #for item in offset:
            #print(f'{item:+.2f} s')
+           
         # Print sorted data
         sort_list = sort_des(results)
         print(*sort_list, sep='\n')
