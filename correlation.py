@@ -687,46 +687,7 @@ if __name__ == '__main__':
         plot_all(results,"val2025gmvf", "val2025gmvl")
         # Print lags individualy
         #for item in offset:
-           # print(f'{item:+.2f} s')
+           #print(f'{item:+.2f} s')
         # Print sorted data
         sort_list = sort_des(results)
         print(*sort_list, sep='\n')
-    
-    ## Test - Event by data
-    ev_ids = get_event_by_data("2023-01-01T00:00:00", "2025-01-01T00:00:00")
-    if phase == "P":
-        results=corr_matrix(ev_ids, station, phase=phase, fmin=fmin,
-                          fmax=fmax,start1=pre, start2=pre+corr_shift,
-                          end1=pos, end2=pos + corr_shift,
-                          maxshift = corr_shift,
-                          correction = correct,
-                          cl_e = client_event, cl_d = client_data)
-
-    sort_list = sort_des(results)
-    print(*sort_list, sep='\n')
-    
-    Mcorr = assembly_matrix(results)
-    plot_matrix(Mcorr, events, correct)
-    plot_graph(results, pre)
-    
-    if correct:
-        offset = [r.OFFSET for r in results]
-        off_M = assembly_off(results)
-        plot_offset(off_M, events)
-        plot_all(results,"val2025gmvf", "val2025gmvl")
-        # Print lags individualy
-        #for item in offset:
-           # print(f'{item:+.2f} s')
-        # Print sorted data
-        
-        
-    ## End of Test
-    
-    
-    
-    
-    
-    
-    
-    
-        
