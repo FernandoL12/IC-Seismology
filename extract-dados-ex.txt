@@ -1,0 +1,11 @@
+# Comandos
+
+# No site:
+seisvl.sismo.iag.usp.br:18003/fdsnws/event/1/query?format=text&lat=-5.8306&lon=-50.5384&maxdistance=0.1
+
+# No terminal
+more eventos.txt 
+awk -F"|" 'NR>1 && $14=="induced earthquake" {print $0}' eventos.txt  | wc -l
+awk -F"|" 'NR>1 && $14=="induced earthquake" {print $0}' eventos.txt > induced.txt
+joe induced.txt
+
