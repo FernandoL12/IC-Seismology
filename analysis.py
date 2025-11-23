@@ -20,20 +20,34 @@ warnings.filterwarnings("ignore")
 
 #-----------------------------------------------------------------------
 ## Functions
+## 1) Get evids by date
 def get_ids(start_date, end_date, dates, evid):
 	'''
 	str, str, list, list
 	
 	Get a list with the events' ids within time interval.
 	'''
+	
 	start1_date = UTCDateTime(start_date)
 	start1 = next(i for i, d in enumerate(dates) if d >= start1_date)
 
 	end1_date   = UTCDateTime(end_date)
 	end1 = next(i for i in reversed(range(len(dates))) if dates[i] <= end1_date)
 
-	return c1_ids = evid[start1:end1+1]
+	return evid[start1:end1+1]
 
+
+## 2) Write file with ids
+def write_file(path, id_list, sep=" "):
+	'''
+	str, str --> file.txt
+	
+	Get a list with ID and write them on a .txt file.
+	'''
+	
+	with open(file_path, 'w') as file:
+		for ev_id in id_list:
+			file.write(ev_id + sep)
 #-----------------------------------------------------------------------
 ## Code
 # Data selection criteria: events within 0.1° radius (11.11 km)
@@ -69,35 +83,36 @@ plt.savefig("induced-map-by-date.png")
 ## Cluster 1
 # Start date: 2024-12-15
 # End date  : 2025-02-01
-start1_date = UTCDateTime('2024-12-15')
-start1 = next(i for i, d in enumerate(dates) if d >= start1_date)
+start_date = UTCDateTime('2024-12-15')
+end_date   = UTCDateTime('2024-12-15')
+c1_ids = get_ids(start_date, end_date, dates, evid)
 
-end1_date   = UTCDateTime('2024-12-15')
-end1 = next(i for i in reversed(range(len(dates))) if dates[i] <= end1_date)
+# Creating a txt document to keep IDs
+file_path = "cluster1.txt"
+write_file(file_path, c1_ids)
 
-c1_ids = evid[start1:end1+1]
-print(c1_ids)
 
 ## Cluster 2
 # Start date: 2025-04-03
 # End date  : 2025-04-05
-start2_date = UTCDateTime('2025-04-03')
-start2 = next(i for i, d in enumerate(dates) if d >= start2_date)
+start_date = UTCDateTime('2025-04-03')
+end_date   = UTCDateTime('2025-04-05')
+c2_ids = get_ids(start_date, end_date, dates, evid)
+# Creating a txt document to keep IDs
+file_path = "cluster2.txt"
+write_file(file_path, c2_ids)
 
-end2_date   = UTCDateTime('2025-04-05')
-end2 = next(i for i in reversed(range(len(dates))) if dates[i] <= end2_date)
-c2_ids = evid[start2:end2+1]
-
+		
 ## Cluster 3
 # Start date: 2025-07-01
 # End date  : 2025-07-15
-start3_date = UTCDateTime('2025-07-01')
-start3 = next(i for i, d in enumerate(dates) if d >= start3_date)
+start_date = UTCDateTime('2025-07-01')
+end_date   = UTCDateTime('2025-07-15')
+c3_ids = get_ids(start_date, end_date, dates, evid)
 
-end3_date   = UTCDateTime('2025-07-15')
-end3 = next(i for i in reversed(range(len(dates))) if dates[i] <= end3_date)
-
-c3_ids = evid[start3:end3+1]
+# Creating a txt document to keep IDs
+file_path = "cluster3.txt"
+write_file(file_path, c3_ids)
 
 
 
