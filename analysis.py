@@ -45,9 +45,44 @@ def write_file(path, id_list, sep=" "):
 	Get a list with ID and write them on a .txt file.
 	'''
 	
-	with open(file_path, 'w') as file:
+	with open(path, 'w') as file:
 		for ev_id in id_list:
 			file.write(ev_id + sep)
+			
+
+## 3) Statistical analysis
+def statistical(ids, ids_list, mag_list):
+	"""
+	list, list, list --> dict
+	
+	Computes basic magnitude statistics for the subset of event IDs provided.
+	"""
+
+	# Verification if lists are not None
+	if ids is None or len(ids) == 0:
+		raise ValueError("Error: 'ids' list is empty — no events were provided.")
+
+	if ids_list is None or len(ids_list) == 0:
+		raise ValueError("Error: 'ids_list' is empty — cannot match events.")
+
+	if mag_list is None or len(mag_list) == 0:
+		raise ValueError("Error: 'mag_list' is empty — no magnitudes available.")
+
+	# Find indices of selected IDs
+	magnitudes = [mag_list[i] for i, eid in enumerate(ids_list) if eid in ids]
+
+	if not magnitudes:
+		raise ValueError("Error: None of the provided IDs exist in ids_list.")
+
+	# Calculate statistics
+	num_events  = len(magnitudes)
+	max_mag     = max(magnitudes)
+	mean_mag    = sum(magnitudes) / num_events
+	median_mag  = np.median(magnitudes)
+
+	return num_events, max_mag, mean_mag, median_mag
+
+
 #-----------------------------------------------------------------------
 ## Code
 # Data selection criteria: events within 0.1° radius (11.11 km)
@@ -63,13 +98,19 @@ evid, date_str, lat, lon, mag = np.loadtxt(fname="induced.txt"    ,
                                           dtype=object)  
                                           
 # Convert to appropriate types
-dates = [UTCDateTime(d).datetime for d in date_str]
+dates = np.array([UTCDateTime(d) for d in date_str])
 lat = lat.astype(float)
 lon = lon.astype(float) 
 mag = mag.astype(float)
 
+# Sort everything by time
+idx   = np.argsort(dates)
+dates = dates[idx]
+evid  = evid[idx]
+mag   = mag[idx]
+
 # Plot date by magnitude graph
-plt.plot(dates, mag, '*', markersize=3)
+plt.plot([d.datetime for d in dates], mag, '*', markersize=3)
 plt.title('Induced earthquake occurrence over time')
 plt.xlabel('Date')
 plt.ylabel('Magnitude')
@@ -77,66 +118,60 @@ plt.grid(alpha=0.7)
 plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
 plt.savefig("induced-map-by-date.png")
 
+
 ####
 # CLUSTERS
+cluster_dict = {}
 
 ## Cluster 1
-# Start date: 2024-12-15
-# End date  : 2025-02-01
-start_date = UTCDateTime('2024-12-15')
-end_date   = UTCDateTime('2024-12-15')
+start_date = '2024-12-15'
+end_date   = '2025-02-01'
 c1_ids = get_ids(start_date, end_date, dates, evid)
 
-# Creating a txt document to keep IDs
-file_path = "cluster1.txt"
-write_file(file_path, c1_ids)
-
+write_file("cluster1.txt", c1_ids)
+cluster_dict["cluster 1"] = c1_ids
 
 ## Cluster 2
-# Start date: 2025-04-03
-# End date  : 2025-04-05
-start_date = UTCDateTime('2025-04-03')
-end_date   = UTCDateTime('2025-04-05')
+start_date = '2025-04-03'
+end_date   = '2025-04-05'
 c2_ids = get_ids(start_date, end_date, dates, evid)
-# Creating a txt document to keep IDs
-file_path = "cluster2.txt"
-write_file(file_path, c2_ids)
 
-		
+write_file("cluster2.txt", c2_ids)
+cluster_dict["cluster 2"] = c2_ids
+
 ## Cluster 3
-# Start date: 2025-07-01
-# End date  : 2025-07-15
-start_date = UTCDateTime('2025-07-01')
-end_date   = UTCDateTime('2025-07-15')
+start_date = '2025-07-01'
+end_date   = '2025-07-15'
 c3_ids = get_ids(start_date, end_date, dates, evid)
 
-# Creating a txt document to keep IDs
-file_path = "cluster3.txt"
-write_file(file_path, c3_ids)
+write_file("cluster3.txt", c3_ids)
+cluster_dict["cluster 3"] = c3_ids
 
 
+####
+# Statistical analysis
+clusters = {}
 
+for cluster_name, ids in cluster_dict.items():
+    num_events, max_mag, mean_mag, median_mag = statistical(ids, evid, mag)
 
+    clusters[cluster_name] = {
+							"ev_ids"    : ids       ,
+							"num_events": num_events,
+							"max_mag"   : max_mag   ,
+							"mean_mag"  : mean_mag  ,
+							"median_mag": median_mag
+							}
 
+# Save clusters information to a text file
+with open('Clusters.txt', 'w') as file:
+	for cluster_name, data in clusters.items():
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+		file.write(f"{cluster_name}:\n")
+		file.write(f"    ev_ids     : {', '.join(data['ev_ids'])}\n")
+		file.write(f"    num_events : {data['num_events']}\n"       )
+		file.write(f"    max_mag    : {data['max_mag']}\n"          )
+		file.write(f"    mean_mag   : {data['mean_mag']}\n"         )
+		file.write(f"    median_mag : {data['median_mag']}\n"       )
+		file.write("\n")
 
