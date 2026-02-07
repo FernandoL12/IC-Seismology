@@ -110,6 +110,11 @@ def evpicks(evid, phases = ['P'], station = None, client = 'http://10.110.0.135:
         all_data.append((P.waveform_id.id, P.time))
 
     if station is not None:
+        print("Available waveform_ids for this event:")
+        for A in O.arrivals:
+            Pk = next((p for p in E.picks if p.resource_id == A.pick_id), None)
+            if Pk:
+                print(Pk.waveform_id.id)
         raise Exception("Station {} not found.".format(station))
 
     return all_data
@@ -686,11 +691,11 @@ if __name__ == '__main__':
         plot_offset(off_M, events)
         
         # To plot processing steps ->
-        #plot_all(results,"val2025gmvf", "val2025gmvl")
+        plot_all(results,"val2025gmvf", "val2025gmvl")
         
         # Print lags individualy
-        #for item in offset:
-           #print(f'{item:+.2f} s')
+        for item in offset:
+           print(f'{item:+.2f} s')
            
         # Print sorted data
         sort_list = sort_des(results)

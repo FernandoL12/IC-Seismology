@@ -13,13 +13,13 @@ lp      = 10
 hp      = 2
 fdsn    = http://10.110.0.135:18003/
 cs      = 0.05
-
+script  = correlation.py
 
 # ============================
 #  TEST 1 — pass IDs directly
 # ============================
 # Example:
-# make test_ids ids="val2024abc val2024def val2025xyz"
+# make test_ids ids="val2024gnbo val2024gmvf val2025gmvl"
 # ============================
 test_ids:
 	@if [ -z "$(ids)" ]; then \
@@ -27,7 +27,7 @@ test_ids:
 		echo "OR you can use a file with: make test_file file=cluster1.txt"; \
 		exit 1; \
 	fi
-	python3 correlation.py $(ids) \
+	python3 $(script) $(ids) \
 		-s $(station) -w $(window) -lp $(lp) -hp $(hp) \
 		-F $(fdsn) -c -cs $(cs)
 
@@ -44,7 +44,7 @@ test_file:
 		echo "OR you can pass IDs directly with: make test_ids ids=\"id1 id2\""; \
 		exit 1; \
 	fi
-	python3 correlation.py $(shell cat $(file)) \
+	python3 $(script) $(shell cat $(file)) \
 		-s $(station) -w $(window) -lp $(lp) -hp $(hp) \
 		-F $(fdsn) -c -cs $(cs)
 

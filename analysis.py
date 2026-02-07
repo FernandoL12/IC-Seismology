@@ -70,7 +70,8 @@ def statistical(ids, ids_list, mag_list):
 
 	# Find indices of selected IDs
 	magnitudes = [mag_list[i] for i, eid in enumerate(ids_list) if eid in ids]
-
+	num_events = len(magnitudes)
+	
 	if not magnitudes:
 		raise ValueError("Error: None of the provided IDs exist in ids_list.")
 
@@ -86,7 +87,7 @@ def statistical(ids, ids_list, mag_list):
 #-----------------------------------------------------------------------
 ## Code
 # Data selection criteria: events within 0.1° radius (11.11 km)
-#of station BL.SLBO using the station's GPS coordinates
+#of station VL.SLBO using the station's GPS coordinates
 
 #'U10' for a Unicode string of max length 10, 'f8' for 64-bit float, 'i4' for 32-bit integer
 # dtype_spec = [('evid', 'U11'), ('date', 'U26'), ('lat', 'f8'), ('lon', 'f8'), ('mag', 'f8')]
@@ -170,8 +171,8 @@ with open('Clusters.txt', 'w') as file:
 		file.write(f"{cluster_name}:\n")
 		file.write(f"    ev_ids     : {', '.join(data['ev_ids'])}\n")
 		file.write(f"    num_events : {data['num_events']}\n"       )
-		file.write(f"    max_mag    : {data['max_mag']}\n"          )
-		file.write(f"    mean_mag   : {data['mean_mag']}\n"         )
-		file.write(f"    median_mag : {data['median_mag']}\n"       )
+		file.write(f"    max_mag    : {data['max_mag']:.1f}\n"          )
+		file.write(f"    mean_mag   : {data['mean_mag']:.1f}\n"         )
+		file.write(f"    median_mag : {data['median_mag']:.1f}\n"       )
 		file.write("\n")
 
