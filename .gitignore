@@ -6,6 +6,8 @@ others.txt
 
 .gitignore
 
+.virtual_documents/
+
 DEADJOE
 
 all-graphs.png
@@ -31,3 +33,4 @@ cluster2.txt
 cluster3.txt
 
 Clusters.txt
+
