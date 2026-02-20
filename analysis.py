@@ -7,9 +7,17 @@
 
 
 ## Libraries
+import sys
 import numpy as np
 import correlation
 import pandas as pd
+
+if sys.version_info >= (3, 14):
+	raise RuntimeError(
+		"Python 3.14+ is not supported in this project because ObsPy is not "
+		"building reliably yet. Use Python 3.12 or 3.13."
+	)
+
 from obspy.clients import fdsn
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -175,4 +183,3 @@ with open('Clusters.txt', 'w') as file:
 		file.write(f"    mean_mag   : {data['mean_mag']:.1f}\n"         )
 		file.write(f"    median_mag : {data['median_mag']:.1f}\n"       )
 		file.write("\n")
-

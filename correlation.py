@@ -6,8 +6,16 @@
 
 ## Libraries
 import argparse
+import sys
 import numpy as np
 import seaborn as sns
+
+if sys.version_info >= (3, 14):
+    raise RuntimeError(
+        "Python 3.14+ is not supported in this project because ObsPy is not "
+        "building reliably yet. Use Python 3.12 or 3.13."
+    )
+
 from obspy.clients import fdsn
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -414,7 +422,7 @@ def sort_des(results):
 
 ## 4) Visualização _____________________________________________________
 #   4.1) Plot a heatmap using a given matrix
-def plot_matrix(corr_M, ev_id, correct=False, figsize=(7,6), cmap=plt.cm.RdYlGn):
+def plot_matrix(corr_M, ev_id, station, correct=False, figsize=(7,6), cmap=plt.cm.RdYlGn):
     """
     matrix, list, tuple, string --> heatmap
     
@@ -531,7 +539,7 @@ def plot_graph(results, pre, ncols=5, figsize=(30,10)): # ncol=5, figsize=(12,8)
     plt.savefig("all-graphs.png")
     
 #   4.3) Plot offsets
-def plot_offset(off_M, ev_id, figsize=(4,3.4), cmap=plt.cm.seismic_r):
+def plot_offset(off_M, ev_id, station, figsize=(4,3.4), cmap=plt.cm.seismic_r):
     """
     matrix, list, tuple, string --> heatmap
     
@@ -681,17 +689,22 @@ if __name__ == '__main__':
     # Plot results
     ## 1) Correlation matrix
     Mcorr = assembly_matrix(results)
-    plot_matrix(Mcorr, events, correct)
+    plot_matrix(Mcorr, events, station, correct)
     plot_graph(results, pre)
     
     ## 2) Print offset matrix
     if correct:
         offset = [r.OFFSET for r in results]
         off_M = assembly_off(results)
-        plot_offset(off_M, events)
+        plot_offset(off_M, events, station)
         
-        # To plot processing steps ->
-        plot_all(results,"val2025gmvf", "val2025gmvl")
+        # Plot processing steps for the first available pair in this run.
+        if len(events) >= 2:
+            try:
+                plot_all(results, events[0], events[1])
+            except IndexError:
+                if args.verbose:
+                    print("Skipping process plot: no matching event pair found in results.")
         
         # Print lags individualy
         for item in offset:

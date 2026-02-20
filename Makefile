@@ -1,25 +1,33 @@
-#file = cluster1.txt
-
-#test:
-#	python3 correlation.py $(file) -s VL.SLBO..HHZ -w P/0.2/0.72 -lp 10 -hp 2 -F http://10.110.0.135:18003/ -c -cs 0.05
+# file = cluster1.txt
+#
+# Example:
+# make test_ids ids="usp2026doac usp2026dmwl usp2026dmvw"
+# make test_file file=cluster1.txt
+# make check_fdsn
 
 
 # ============================
-#  Default configurations
+#  Default configurations (seisarc tunnel on localhost)
 # ============================
-station = VL.SLBO..HHZ
+station = BL.RVDE..HHZ
 window  = P/0.2/0.72
 lp      = 10
 hp      = 2
-fdsn    = http://10.110.0.135:18003/
+fdsn    = http://127.0.0.1:28080/
 cs      = 0.05
 script  = correlation.py
+
+# ============================
+#  FDSN connectivity check
+# ============================
+check_fdsn:
+	curl -sS $(fdsn)fdsnws/event/1/application.wadl | head -n 20
 
 # ============================
 #  TEST 1 — pass IDs directly
 # ============================
 # Example:
-# make test_ids ids="val2024gnbo val2024gmvf val2025gmvl"
+# make test_ids ids="usp2026doac usp2026dmwl usp2026dmvw"
 # ============================
 test_ids:
 	@if [ -z "$(ids)" ]; then \
@@ -47,5 +55,4 @@ test_file:
 	python3 $(script) $(shell cat $(file)) \
 		-s $(station) -w $(window) -lp $(lp) -hp $(hp) \
 		-F $(fdsn) -c -cs $(cs)
-
 
