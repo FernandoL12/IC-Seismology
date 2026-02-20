@@ -222,15 +222,28 @@ def Ppick_cc(trace1, trace2, t1, t2):
     corr = correlate(trace1.data, trace2.data, mode='valid')
     lags = correlation_lags(len(trace1.data), len(trace2.data), mode='valid')
     
-    # 3) Polynomial adjust 
-    index = np.argmax(corr)
-    
-    lag_3     = lags[index-1:index+2]
-    corr3     = corr[index-1:index+2]
-    a,b,c     = np.polyfit(lag_3*dt, corr3, deg=2)
-    x         = -b/(2*a)
-    lag_maxi  = x
-    corr_maxi = a*x**2 + b*x + c
+    if corr.size == 0 or lags.size == 0:
+        raise ValueError("Empty correlation result; cannot estimate lag.")
+
+    # 3) Polynomial adjust around the maximum when possible.
+    # If the maximum is at the boundaries (or fit is unstable), fall back
+    # to the discrete maximum lag so the workflow keeps running.
+    index = int(np.argmax(corr))
+    lag_maxi = float(lags[index] * dt)
+    corr_maxi = float(corr[index])
+
+    if 0 < index < (len(corr) - 1):
+        lag_3 = lags[index - 1:index + 2].astype(float) * dt
+        corr3 = corr[index - 1:index + 2].astype(float)
+        try:
+            a, b, c = np.polyfit(lag_3, corr3, deg=2)
+            if np.isfinite(a) and abs(a) > 1e-12:
+                x = -b / (2 * a)
+                if np.isfinite(x) and lag_3.min() <= x <= lag_3.max():
+                    lag_maxi = float(x)
+                    corr_maxi = float(a * x**2 + b * x + c)
+        except (TypeError, ValueError, np.linalg.LinAlgError):
+            pass
     
     # 4) Offset correction
     OFFSET = (t1 - rs1) - (t2 - rs2 + lag_maxi)
