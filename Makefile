@@ -18,7 +18,7 @@ window  := P/0.2/0.72
 lp      := 10
 hp      := 2
 
-dfdsn   := http://seisarc.sismo.iag.usp.br 
+dfdsn   := http://10.110.0.134
 #http://10.110.0.134
 #http://www.sismo.iag.usp.br
 #http://seisarc.sismo.iag.usp.br 

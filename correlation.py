@@ -30,8 +30,7 @@ warnings.filterwarnings("ignore")
 ## Functions ##
 ###############
 
-#--------
-# 1) IO
+# IO
 class LoadError(BaseException):
 	pass
 
@@ -204,11 +203,25 @@ def load_event(event, args):
 			event = tr.stats.sac.kevnm
 		else:
 			event = event.replace(".sac","").replace(".SAC","")
-    #====
+
 	else:                     # Load from FDSN event ID
 		# Check that station is set
 		if args.station is None:
 			raise LoadError(f"W:> When loading from an EVID and an FDSN server a station code must be given")
+
+		# S must always be defined
+		N = S = L = C = None
+		try:
+			N,S,L,C = args.station.split(".")
+		except ValueError:
+			try:
+				N,S,L = args.station.split(".")
+			except ValueError:
+				try:
+					N,S = args.station.split(".")
+				except ValueError:
+					if args.station.find(".") != -1: raise LoadError(f"W:> Station must be in the form Net.Station or just Station form.")
+					S = args.station
 
 		# Setup fdsn servers
 		if type(args.dfdsn) == str:
@@ -238,7 +251,10 @@ def load_event(event, args):
 			if A.time_weight <= 0.0: continue
 			if A.phase != phase: continue
 			P = [ P for P in E.picks if P.resource_id == A.pick_id ][0]
-			if P.waveform_id.station_code != args.station: continue
+			if N is not None and P.waveform_id.network_code != N.upper():
+				continue
+			if P.waveform_id.station_code != S.upper():
+				continue
 			
 			break
 		else:
@@ -280,15 +296,8 @@ def load_event(event, args):
 	return event, pick, tr
 
 
-#----------------
-# 2) Processing
-def npts_cut(
-			tr: Trace,
-			t0: UTCDateTime,
-			length: float | None = None,
-			npts: int | None = None,
-			) -> Trace:
-				
+# Processing
+def npts_cut(tr, t0, length = None, npts = None):
 	'''
 	Return a copy of a trace trimmed from a given start time.
 
@@ -331,7 +340,7 @@ def npts_cut(
 	if length is None:
 		length = npts * tr.stats.delta
 	
-	trc.trim(t0real, t0real + length, nearest_sample = False)    
+	trc.trim(t0real, t0real + length, nearest_sample = False)
 
 	return trc
 
@@ -452,8 +461,7 @@ def build_corr_matrix(data, args):
 	return results, [ evid for evid,_,_ in data ]
 
 
-#----------
-# 3) Plot
+# Plot
 def N(data):
 	return data / np.max(np.abs(data))
 
@@ -674,6 +682,7 @@ if __name__ == '__main__':
 			if data[-1][2].stats.delta != d.stats.delta:
 				print(f'E:> Current delta {data[-1][2].stats.delta} @ event {data[-1][0]} differ from delta {d.stats.delta} @ event {e} -- will abort computation.', file = sys.stderr)
 				stop = True
+
 	# Sort data chronologically
 	data.sort(key= lambda x: x[1])
 	
