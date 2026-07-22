@@ -1,51 +1,82 @@
-#file = cluster1.txt
+########################################################################
+# Makefile
+########################################################################
 
-#test:
-#	python3 correlation.py $(file) -s VL.SLBO..HHZ -w P/0.2/0.72 -lp 10 -hp 2 -F http://10.110.0.135:18003/ -c -cs 0.05
+#===============
+# Configuration
+#===============
+PYTHON := python3
+SCRIPT := correlation.py
+
+#====================
+# Default parameters
+#====================
+station := PDRB
+
+window  := P/0.2/0.72
+
+lp      := 10
+hp      := 2
+
+dfdsn   := http://seisarc.sismo.iag.usp.br 
+#http://10.110.0.134
+#http://www.sismo.iag.usp.br
+#http://seisarc.sismo.iag.usp.br 
+#http://10.110.0.135:18003/ <--
+
+shift   := 0.05
+
+#=======================================================================
+### HOW TO USE
+#-- Direct use:
+# python3 correlation.py val2025gnbo val2025gmvf val2025gmvl -S SLBO -w P/1/2 -lp 10 -hp 2 -F http://10.110.0.135:18003/ -c -cs 0.05 --matrix -v
+# $(PYTHON) $(SCRIPT) $(input) -S $(station) -w $(window) -lp $(lp) -hp $(hp) -F $(dfdsn) -c -cs $(shift) $(EXTRA_ARGS)
+#
+#
+#-- Makefile use:
+#
+# make run input="val2025gnbo val2025gmvf"
+#
+# make run input="cluster1.sac cluster2.sac"
+#
+# make run input="$(cat cluster1.txt)"
+#
+# Override defaults:
+#
+# make run input="..." station=VL.SRN1..HH1
+#
+# Extra options:
+#
+# make run input="..." extra="--matrix"
+#
+# make run input="..." extra="--matrix --save"
+#
+# make run input="..." extra="--waveform"
+#
+# make run input="..." extra="--correlation --pair ev1/ev2"
+#
+#=======================================================================
 
 
-# ============================
-#  Default configurations
-# ============================
-station = VL.SLBO..HHZ
-window  = P/0.2/0.72
-lp      = 10
-hp      = 2
-fdsn    = http://10.110.0.135:18003/
-cs      = 0.05
-script  = correlation.py
-
-# ============================
-#  TEST 1 — pass IDs directly
-# ============================
-# Example:
-# make test_ids ids="val2024gnbo val2024gmvf val2025gmvl"
-# ============================
-test_ids:
-	@if [ -z "$(ids)" ]; then \
-		echo "ERROR: you must pass ids=\"id1 id2 id3\""; \
-		echo "OR you can use a file with: make test_file file=cluster1.txt"; \
+run:
+	@if [ -z "$(input)" ]; then \
+		echo "Usage: make run input=\"event1 event2 ...\""; \
 		exit 1; \
 	fi
-	python3 $(script) $(ids) \
-		-s $(station) -w $(window) -lp $(lp) -hp $(hp) \
-		-F $(fdsn) -c -cs $(cs)
 
-
-# ============================
-#  TEST 2 — pass a TXT file
-# ============================
-# Example:
-# make test_file file=cluster1.txt
-# ============================
-test_file:
-	@if [ -z "$(file)" ]; then \
-		echo "ERROR: you must pass file=filename.txt"; \
-		echo "OR you can pass IDs directly with: make test_ids ids=\"id1 id2\""; \
-		exit 1; \
-	fi
-	python3 $(script) $(shell cat $(file)) \
-		-s $(station) -w $(window) -lp $(lp) -hp $(hp) \
-		-F $(fdsn) -c -cs $(cs)
-
-
+	$(PYTHON) $(SCRIPT) \
+		$(input) \
+		-S $(station) \
+		-w $(window) \
+		-lp $(lp) \
+		-hp $(hp) \
+		-F $(dfdsn) \
+		-c \
+		-cs $(shift) \
+		$(extra)
+		
+		
+		
+		
+		
+		
