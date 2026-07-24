@@ -579,10 +579,15 @@ def plot_correlation(data, results, labels, args):
 	# Find correct correlation result to plot
 	eva,evb = args.pair.split("/")
 
-	r = [ rr for rr in [ r for r in results if (data[r.i][0] == eva) or (data[r.j][0] == evb) ] if (data[rr.i][0] == eva) or (data[rr.j][0] == evb)][0]
+	for item in results:
+		if (data[item.i][0] == eva) and (data[item.j][0] == evb):
+			ev_info = item
+		elif (data[item.j][0] == eva) and (data[item.i][0] ==evb):
+			ev_info = item
+	#r = [ rr for rr in [ r for r in results if (data[r.i][0] == eva) and (data[r.j][0] == evb) ]]
 
-	evid1,t1,_ = data[r.i]
-	evid2,t2,_ = data[r.j]
+	evid1,t1,_ = data[ev_info.i]
+	evid2,t2,_ = data[ev_info.j]
 
 	# Plot
 	fig = plt.figure(figsize = (14,6))
