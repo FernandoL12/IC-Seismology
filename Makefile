@@ -11,9 +11,9 @@ SCRIPT := correlation.py
 #====================
 # Default parameters
 #====================
-station := PDRB
+station := LDASE
 
-window  := P/0.2/0.72
+window  := P/0.2/0.7
 
 lp      := 10
 hp      := 2
