@@ -16,6 +16,7 @@ import seaborn as sns
 
 from obspy import read
 from obspy.clients import fdsn
+from obspy.io.sac import SACTrace
 from obspy.core import UTCDateTime, AttribDict, Stream, Trace
 
 import matplotlib.pyplot as plt
@@ -445,18 +446,22 @@ def build_corr_matrix(data, args):
 
             if args.verbose:
                 print(f"I:> For i={i:03d} j={j:03d} evA={evid1:18s} evB={evid2:18s} OFFSET={OFFSET:+8.3f} CORR_COEF={corr_coef:+9.4f}")
+                
+            # Store the correlation results for the current event pair
+            result = AttribDict({
+                                'i' : i,
+                                'j' : j,
+                                'data1' : data1,
+                                'data2' : data2,
+                                'lags' : lags,
+                                'corr' : corr,
+                                'lag_maxi' : lag_maxi,
+                                'OFFSET' : OFFSET,
+                                'M' : corr_coef
+                                })
 
-            results.append(AttribDict({
-                'i' : i,
-                'j' : j,
-                'data1'  : data1,
-                'data2'  : data2,
-                'lags'   : lags,
-                'corr'   : corr,
-                'lag_maxi' : lag_maxi,
-                'OFFSET' : OFFSET,
-                'M' : corr_coef
-            }))
+            results.append(result)
+            write_to_SAC(data, result)
 
     return results, [ evid for evid,_,_ in data ]
 
@@ -488,7 +493,7 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
         cmap  = cmap,
         vmin  = 0.0,
         vmax  = 1,#np.nanmax(heat),
-        annot = False,#True,
+        annot = True,
         ax    = ax,
         xticklabels = labels,
         yticklabels = labels,
@@ -497,7 +502,10 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
     
     plt.setp(ax.get_xticklabels(), rotation=45, ha='center')
     ax.figure.axes[-1].yaxis.label.set_size(12)
-    ax.set_title(f'Correlation matrix{" (corrected)" if args.correction else " "}\nNº of events: {size}', fontsize=15)
+    if args.matrixmode == 'corr':
+        ax.set_title(f'Correlation matrix{" (corrected)" if args.correction else ""}\nNº of events: {size}', fontsize=15)
+    else:
+        ax.set_title(f'Lag matrix\nNº of events: {size}', fontsize=15)
 
     plt.tight_layout()
     
@@ -689,6 +697,141 @@ def plot_correlation(data, results, labels, args):
     plt.show()
 
     return
+
+
+def write_to_SAC(data, result, output_dir="SAC"):
+    """
+    Write the second waveform of a correlation pair to SAC,
+    storing the original and corrected P picks in the SAC header.
+
+    SAC markers:
+        T1  -> original P pick
+        T2  -> corrected P pick
+        KT1 -> P_ORIG
+        KT2 -> P_CORR
+
+    Additional information:
+        USER0  -> correlation OFFSET
+        KUSER0 -> CC_OFFSET
+
+    Parameters
+    ----------
+    data : list
+        Original data list returned by load_event().
+
+    result : obspy.core.util.attribdict.AttribDict
+        Single correlation result returned by build_corr_matrix().
+
+    output_dir : str
+        Directory where the SAC file will be saved.
+    """
+
+    # ------------------------------------------------------------
+    # Recover the events involved in this correlation
+    # ------------------------------------------------------------
+
+    evid1, pick1, _ = data[result.i]
+    evid2, pick2, _ = data[result.j]
+
+    # ------------------------------------------------------------
+    # Waveform used for Event 2 in the correlation
+    #
+    # This is already the trimmed waveform produced by
+    # build_corr_matrix().
+    # ------------------------------------------------------------
+
+    tr = result.data2.copy()
+
+    # ------------------------------------------------------------
+    # Original and corrected picks
+    # ------------------------------------------------------------
+
+    pick_original = pick2
+    pick_corrected = pick2 + result.OFFSET
+
+    # ------------------------------------------------------------
+    # SAC reference time
+    #
+    # The saved waveform begins at:
+    #
+    #     tr.stats.starttime
+    #
+    # Therefore T1 and T2 must be expressed relative to this time.
+    # ------------------------------------------------------------
+
+    reference_time = tr.stats.starttime
+
+    t1 = pick_original - reference_time
+    t2 = pick_corrected - reference_time
+
+    # ------------------------------------------------------------
+    # Convert ObsPy Trace -> SACTrace
+    # ------------------------------------------------------------
+
+    sac = SACTrace.from_obspy_trace(tr)
+
+    # ------------------------------------------------------------
+    # Store the picks
+    # ------------------------------------------------------------
+
+    sac.t1 = float(t1)
+    sac.t2 = float(t2)
+
+    sac.kt1 = "P_ORIG"
+    sac.kt2 = "P_CORR"
+
+    # ------------------------------------------------------------
+    # Store the correlation offset as auxiliary information
+    # ------------------------------------------------------------
+
+    sac.user0 = float(result.OFFSET)
+    sac.kuser0 = "CC_OFFSET"
+    
+    # ------------------------------------------------------------
+    # Create output directory
+    # ------------------------------------------------------------
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # ------------------------------------------------------------
+    # Identify waveform
+    # ------------------------------------------------------------
+
+    network = tr.stats.network
+    station = tr.stats.station
+    location = tr.stats.location if tr.stats.location else "--"
+    channel = tr.stats.channel
+
+    # ------------------------------------------------------------
+    # Pair-specific filename
+    # ------------------------------------------------------------
+
+    filename = (
+        f"{evid1}_x_{evid2}."
+        f"{network}.{station}.{location}.{channel}.sac"
+    )
+
+    filepath = os.path.join(output_dir, filename)
+
+    # ------------------------------------------------------------
+    # Write SAC
+    # ------------------------------------------------------------
+
+    sac.write(filepath)
+
+    if os.path.exists(filepath):
+        print(
+            f"I:> SAC written: {filepath}\n"
+            f"I:>   Event 1       : {evid1}\n"
+            f"I:>   Event 2       : {evid2}\n"
+            f"I:>   Original P    : {pick_original}\n"
+            f"I:>   Corrected P   : {pick_corrected}\n"
+            f"I:>   T1            : {t1:.6f} s\n"
+            f"I:>   T2            : {t2:.6f} s\n"
+            f"I:>   OFFSET        : {result.OFFSET:+.6f} s"
+        )
+
+    return filepath
 
 
 ##################

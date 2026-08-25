@@ -8,6 +8,10 @@ others.txt
 
 .virtual_documents/
 
+__pycache__/
+
+SAC/
+
 DEADJOE
 
 all-graphs.png
@@ -21,8 +25,6 @@ process.png
 induced.txt
 
 eventos.txt
-
-__pycache__/
 
 induced-map-by-date.png
 
