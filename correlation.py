@@ -42,6 +42,7 @@ def cmdline():
                     description='Matriz Cross-Correlation Code',
                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
+
     # General Parameters
     g0 = parser.add_argument_group('General')
     g0.add_argument('-v', '--verbose', action='store_true',
@@ -50,11 +51,12 @@ def cmdline():
     g0.add_argument('-S', '--station', type = str, default = None,
                     help = 'Indicate station to use (needed if only events IDs are supplied).')
 
-    g0.add_argument('-w', '--window', default = 'P/1/2', type = str,
+    g0.add_argument('-w', '--window', default = 'P/0.2/1', type = str,
                     help = 'Window size to perform the correlation. Format is Phase/pre[/pos]. Pre and Pos are positive numbers, Phase is one of P or S. [] are optional.')
 
     g0.add_argument('events', nargs='+',
                     help='Id of one or more events to process.')
+
 
     # Correlation parameters
     g1 = parser.add_argument_group('Correlation Parameters')
@@ -62,11 +64,9 @@ def cmdline():
     g1.add_argument('-c', '--correction', action = 'store_true',
                     help = 'Perform a correction shift of given seconds to search for best alignment.')
 
-    g1.add_argument('-cs', '--correction-shift', default = 2.0, type = float,
+    g1.add_argument('-cs', '--correction-shift', default = 0.05, type = float,
                     help = 'Amount of shift allowed while searching for the max correlation in a given window.')
 
-    g1.add_argument('-s', '--self', action = 'store_true',
-                    help = 'Perform auto-correlation')
 
     # Filters
     g2 = parser.add_argument_group('Data Processing Parameters')
@@ -81,7 +81,7 @@ def cmdline():
     # FDSN server sources
     g3 = parser.add_argument_group('Data Fetching parameters')
 
-    g3.add_argument('-F', '--dfdsn', type = str, default = 'http://seisarc.sismo.iag.usp.br',
+    g3.add_argument('-F', '--dfdsn', type = str, default = 'http://10.110.0.134',
                     help = 'FDSN server to fetch data. If no -E option is given this is the default server to fetch events.')
 
     g3.add_argument('-E', '--efdsn', type = str, default = None,
@@ -111,6 +111,16 @@ def cmdline():
 
     g4.add_argument('--save', action = 'store_true',
                     help = 'Instead of showing in screen, save to disk images.')
+
+
+    # Output format
+    g5 = parser.add_argument_group('Output format')
+
+    g5.add_argument('--sac', action= 'store_true',
+                    help = 'Store corrected pick in a SAC file')
+
+    g5.add_argument('--ref', default = None,
+                    help = 'Use an Event as reference to correct others')
 
     # Process
     args = parser.parse_args()
@@ -252,14 +262,21 @@ def load_event(event, args):
             if A.time_weight <= 0.0: continue
             if A.phase != phase: continue
             P = [ P for P in E.picks if P.resource_id == A.pick_id ][0]
+
+            # Network
             if N is not None and P.waveform_id.network_code != N.upper():
                 continue
+            # Station
             if P.waveform_id.station_code != S.upper():
                 continue
-            
+            # Location
+            if L is not None:
+                pick_location = P.waveform_id.location_code or ""
+                if pick_location != L.upper():
+                    continue          
             break
         else:
-            raise LoadError(f'W:> Cannot find valid {phase} pick @ {event} for {args.station} station.')
+            raise LoadError(f'W:> Cannot find valid {phase} pick in {event} for {args.station} station.')
 
         # Load data
         try:
@@ -267,8 +284,8 @@ def load_event(event, args):
             S = P.waveform_id.station_code
             L = P.waveform_id.location_code if P.waveform_id.location_code is not None else ""
 
-            # this is hardcoded, should be an option!
-            C = P.waveform_id.channel_code[:2] + "Z"
+            if C is None:
+                C = P.waveform_id.channel_code[:2] + "Z"
 
             start = P.time - (pre + _REQUEST_MARGIN_)
             end   = P.time + (pos + _REQUEST_MARGIN_)
@@ -360,9 +377,9 @@ def pre_process(pick, trace, args, add_corr_margin):
     tr.detrend()
 
     if args.low_pass is None and args.high_pass is not None:
-        tr.filter("lowpass", freq = args.low_pass)
-    elif args.low_pass is not None and args.high_pass is None:
         tr.filter("highpass", freq = args.high_pass)
+    elif args.low_pass is not None and args.high_pass is None:
+        tr.filter("lowpass", freq = args.low_pass)
     elif args.low_pass is not None and args.high_pass is not None:
         tr.filter("bandpass", freqmin = args.high_pass, freqmax = args.low_pass)
 
@@ -399,7 +416,7 @@ def build_corr_matrix(data, args):
         evid1, pick1, data1 = data[i]
         data1 = pre_process(pick1, data1, args, False)
 
-        for j in range(i+(0 if args.self else 1), size):
+        for j in range(i+1, size):
             evid2, pick2, data2 = data[j]
             data2 = pre_process(pick2, data2, args, True)
 
@@ -428,7 +445,6 @@ def build_corr_matrix(data, args):
                 else:
                     lag_3     = lags[index-1:index+2]
                     corr3     = corr[index-1:index+2]
-
                     
                     a,b,c     = np.polyfit(lag_3*dt, corr3, deg=2)
                     x         = -b/(2*a)
@@ -461,7 +477,6 @@ def build_corr_matrix(data, args):
                                 })
 
             results.append(result)
-            write_to_SAC(data, result)
 
     return results, [ evid for evid,_,_ in data ]
 
@@ -502,8 +517,13 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
     
     plt.setp(ax.get_xticklabels(), rotation=45, ha='center')
     ax.figure.axes[-1].yaxis.label.set_size(12)
+    try:
+        N,S,L,C = args.station.split(".")
+        comp = True
+    except:
+        comp = False
     if args.matrixmode == 'corr':
-        ax.set_title(f'Correlation matrix{" (corrected)" if args.correction else ""}\nNº of events: {size}', fontsize=15)
+        ax.set_title(f'Correlation matrix{f" | {C[-1]} component" if comp else ""} {" (corrected)" if args.correction else ""}\nNº of events: {size}', fontsize=15)
     else:
         ax.set_title(f'Lag matrix\nNº of events: {size}', fontsize=15)
 
@@ -512,7 +532,9 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
     if args.save:
         if args.verbose:
             print(f'I:> Save matrix correlation plot to matrix-corr.png')
-        plt.savefig("matrix-corr.png")
+        lp = args.low_pass
+        hp = args.high_pass
+        plt.savefig(f"matrix-corr_{hp}-{lp}.png")
         return
 
     plt.show()
@@ -599,8 +621,7 @@ def plot_waveforms(data, results, labels, args):
     if args.save:
         if args.verbose:
             print(f'I:> Save waveforms plot to all-graphs.png')
-
-        plt.savefig("all-graphs.png")
+        plt.savefig(f"all-wave-graphs.png")
         return
 
     plt.show()
@@ -691,7 +712,7 @@ def plot_correlation(data, results, labels, args):
 
     if args.save:
         print(f'Saving figure to file cross-{evid1}x{evid2}.png')
-        plt.savefig(f"cross-{evid1}x{evid2}.png")
+        plt.savefig(f"cross-{evid1}X{evid2}.png")
         return
 
     plt.show()
@@ -699,10 +720,10 @@ def plot_correlation(data, results, labels, args):
     return
 
 
+# Output
 def write_to_SAC(data, result, output_dir="SAC"):
     """
-    Write the second waveform of a correlation pair to SAC,
-    storing the original and corrected P picks in the SAC header.
+    Store the original and corrected P picks in the SAC header.
 
     SAC markers:
         T1  -> original P pick
@@ -726,53 +747,27 @@ def write_to_SAC(data, result, output_dir="SAC"):
         Directory where the SAC file will be saved.
     """
 
-    # ------------------------------------------------------------
-    # Recover the events involved in this correlation
-    # ------------------------------------------------------------
-
+    # Get event ID and pick time
     evid1, pick1, _ = data[result.i]
     evid2, pick2, _ = data[result.j]
 
-    # ------------------------------------------------------------
-    # Waveform used for Event 2 in the correlation
-    #
-    # This is already the trimmed waveform produced by
-    # build_corr_matrix().
-    # ------------------------------------------------------------
-
+    # Get the trimmed waveform of Event 2
     tr = result.data2.copy()
 
-    # ------------------------------------------------------------
-    # Original and corrected picks
-    # ------------------------------------------------------------
-
+    # Get original and corrected picks
     pick_original = pick2
     pick_corrected = pick2 + result.OFFSET
 
-    # ------------------------------------------------------------
-    # SAC reference time
-    #
-    # The saved waveform begins at:
-    #
-    #     tr.stats.starttime
-    #
-    # Therefore T1 and T2 must be expressed relative to this time.
-    # ------------------------------------------------------------
-
+    # Put original and correted pick in relative time
+    # The reference is the start of the Event 2 trace
     reference_time = tr.stats.starttime
 
     t1 = pick_original - reference_time
     t2 = pick_corrected - reference_time
 
-    # ------------------------------------------------------------
-    # Convert ObsPy Trace -> SACTrace
-    # ------------------------------------------------------------
-
+    # Convert Event 2 trace (tr)
+    #   ObsPy Trace -> SACTrace
     sac = SACTrace.from_obspy_trace(tr)
-
-    # ------------------------------------------------------------
-    # Store the picks
-    # ------------------------------------------------------------
 
     sac.t1 = float(t1)
     sac.t2 = float(t2)
@@ -780,43 +775,31 @@ def write_to_SAC(data, result, output_dir="SAC"):
     sac.kt1 = "P_ORIG"
     sac.kt2 = "P_CORR"
 
-    # ------------------------------------------------------------
-    # Store the correlation offset as auxiliary information
-    # ------------------------------------------------------------
-
+    # Store offset for more infor if needed
     sac.user0 = float(result.OFFSET)
     sac.kuser0 = "CC_OFFSET"
     
-    # ------------------------------------------------------------
-    # Create output directory
-    # ------------------------------------------------------------
 
+    # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    # ------------------------------------------------------------
-    # Identify waveform
-    # ------------------------------------------------------------
-
-    network = tr.stats.network
-    station = tr.stats.station
-    location = tr.stats.location if tr.stats.location else "--"
-    channel = tr.stats.channel
+    # Identify station code
+    network  = tr.stats.network
+    station  = tr.stats.station
+    location = tr.stats.location if tr.stats.location else ""
+    channel  = tr.stats.channel
 
     # ------------------------------------------------------------
     # Pair-specific filename
-    # ------------------------------------------------------------
 
     filename = (
-        f"{evid1}_x_{evid2}."
+        f"{evid1}_x_{evid2}_"
         f"{network}.{station}.{location}.{channel}.sac"
     )
 
     filepath = os.path.join(output_dir, filename)
 
-    # ------------------------------------------------------------
-    # Write SAC
-    # ------------------------------------------------------------
-
+    # Write SAC file
     sac.write(filepath)
 
     if os.path.exists(filepath):
@@ -829,11 +812,261 @@ def write_to_SAC(data, result, output_dir="SAC"):
             f"I:>   T1            : {t1:.6f} s\n"
             f"I:>   T2            : {t2:.6f} s\n"
             f"I:>   OFFSET        : {result.OFFSET:+.6f} s"
-        )
+            )
 
     return filepath
 
 
+def build_ref_corr(data, args):
+    """
+    Cross correlate only the reference events against all input events.
+    """
+
+    _, pre, pos = args.window
+    ref_list = args.ref.split()
+
+    for i in range(len(data)):
+        evid1, pick1, data1 = data[i]
+
+        if evid1 not in ref_list:
+            continue
+
+        data1 = pre_process(pick1, data1, args, False)
+
+        for j in range(len(data)):
+            if i == j:
+                continue
+
+            evid2, pick2, data2 = data[j]
+            data2 = pre_process(pick2, data2, args, True)
+
+            # --------------------------------
+            # Daqui para baixo é sua correlação
+            # --------------------------------
+
+            OFFSET = 0.0
+            rs1 = 0.0
+            rs2 = 0.0
+            lags = None
+            corr = None
+            lag_maxi = 0.0
+            corr_maxi = 0.0
+
+            if args.correction:
+
+                corr = correlate(data1.data, data2.data, mode='valid')
+                lags = correlation_lags(len(data1.data),len(data2.data), mode='valid')
+                index = np.argmax(corr)
+                dt = data1.stats.delta
+
+                if index == 0 or index == len(corr) - 1:
+
+                    lag_maxi = lags[index] * dt
+                    corr_maxi = corr[index]
+
+                else:
+
+                    lag_3 = lags[index-1:index+2]
+                    corr3 = corr[index-1:index+2]
+
+                    a,b,c     = np.polyfit(lag_3*dt, corr3, deg=2)
+                    x = -b / (2*a)
+                    lag_maxi = x
+                    corr_maxi = a*x**2 + b*x + c
+
+                rs1 = data1.times('utcdatetime')[0]
+                rs2 = data2.times('utcdatetime')[0]
+                OFFSET = (pick1 - rs1) - (pick2 - rs2 + lag_maxi)
+
+            data1 = npts_cut(data1, t0 = pick1 - pre, length = (pre + pos))
+            data2 = npts_cut(data2, t0 = pick2 - pre + OFFSET, npts = data1.stats.npts)
+            corr_coef = np.abs(np.corrcoef(data1.data, data2.data)[0][1])
+
+            result = AttribDict({
+                                'i': i,
+                                'j': j,
+                                'data1': data1,
+                                'data2': data2,
+                                'lags': lags,
+                                'corr': corr,
+                                'lag_maxi': lag_maxi,
+                                'OFFSET': OFFSET,
+                                'M': corr_coef
+                                })
+
+            print(
+                f"Reference: {evid1} | "
+                f"Event: {evid2} | "
+                f"OFFSET={OFFSET:+8.3f} | "
+                f"CORR={corr_coef:+9.4f}"
+            )
+
+            write_to_SAC(data, result)
+
+
+def build_ref_waveform(data, results, labels, args):
+    """
+    Plot waveforms for correlations involving reference events.
+    Reference event is always shown as Event 1.
+    """
+
+    phase, pre, pos = args.window
+    ref_list = args.ref.split()
+
+    # Select results involving reference events
+    ref_results = []
+
+    for r in results:
+        evid1 = data[r.i][0]
+        evid2 = data[r.j][0]
+
+        if evid1 in ref_list:
+            ref_results.append((r, False))
+
+        elif evid2 in ref_list:
+            ref_results.append((r, True))
+
+    # Number of plots and panels
+    ntotal = len(ref_results)
+
+    if ntotal == 0:
+        print('W:> No correlation results found for reference events.')
+        return
+
+    ncols = args.waveform_cols if ntotal > args.waveform_cols else ntotal
+    nrows = 1 if ntotal <= args.waveform_cols else ntotal // ncols
+
+    if ncols * nrows < ntotal:
+        nrows += 1
+
+    # Plots
+    fig, axs = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(ncols * 5, nrows * 3),
+        squeeze=False
+    )
+
+    # Working
+    for cont, (r, invert) in enumerate(ref_results):
+
+        row = cont // ncols
+        col = cont % ncols
+
+        evid1, t1, _ = data[r.i]
+        evid2, t2, _ = data[r.j]
+
+        data1 = r.data1
+        data2 = r.data2
+        offset = r.OFFSET
+
+        # Make reference event always Event 1
+        if invert:
+            evid1, evid2 = evid2, evid1
+            t1, t2 = t2, t1
+            data1, data2 = data2, data1
+            offset = -offset
+
+        ax = axs[row][col]
+
+        # Title
+        ax.set_title(
+            f"After correlation\n{evid1} -x- {evid2}",
+            fontsize=12
+        )
+
+        # Waveforms
+        ax.plot(
+            data2.times('utcdatetime') - t2 - offset,
+            N(data2.data),
+            "--",
+            color='#F97306',
+            label='Event 2'
+        )
+
+        ax.plot(
+            data1.times('utcdatetime') - t1,
+            N(data1.data),
+            color='C0',
+            label='Event 1'
+        )
+
+        # Picks
+        ax.axvline(
+            0.0,
+            color='limegreen',
+            ls='--',
+            lw=1.2,
+            label='Corrected Pick (2)'
+        )
+
+        ax.axvline(
+            0.0,
+            0.05,
+            0.50,
+            color='C0',
+            lw=2
+        )
+
+        ax.axvline(
+            -offset,
+            0.55,
+            0.95,
+            color='#F97306',
+            lw=2
+        )
+
+        # Limits
+        mmin = min(data1.times('utcdatetime') - t1)
+        mmax = max(data1.times('utcdatetime') - t1)
+
+        mmin -= abs(0.02 * (mmax - mmin))
+        mmax += abs(0.02 * (mmax - mmin))
+
+        ax.set_xlim((mmin, mmax))
+
+        ax.set_xlabel(
+            "Time relative to trace start time (s)",
+            fontsize=10
+        )
+
+        ax.set_ylabel(
+            "Normalized amplitude",
+            fontsize=10
+        )
+
+        ax.grid(alpha=0.4)
+        ax.legend(
+            loc=4,
+            ncols=2,
+            fontsize=8
+        )
+
+    # Remove unused axes
+    for i in range(ntotal, nrows * ncols):
+        row = i // ncols
+        col = i % ncols
+        fig.delaxes(axs[row][col])
+
+    plt.tight_layout()
+
+    if args.save:
+        lp = args.low_pass
+        hp = args.high_pass
+
+        if args.verbose:
+            print(
+                f'I:> Save reference waveforms plot to '
+                f'ref-wave-graphs_{hp}-{lp}.png'
+            )
+
+        plt.savefig(f"ref-wave-graphs_{hp}-{lp}.png")
+        return
+
+    plt.show()
+    return
+    
+    
 ##################
 ##     Main     ##
 ##################
@@ -929,5 +1162,10 @@ if __name__ == '__main__':
     # Seismograms plot
     if args.correlation:
         plot_correlation(data, results, labels, args)
+        
+    # SAC Output
+    if args.sac:
+        build_ref_corr(data, args)
+        build_ref_waveform(data, results, labels, args)
 
     sys.exit(0)
