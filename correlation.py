@@ -831,14 +831,23 @@ def build_ref_corr(data, args):
         if evid1 not in ref_list:
             continue
 
-        data1 = pre_process(pick1, data1, args, False)
-
+        _,pre,pos = args.window
+        tr = data1.copy()
+        tr.detrend()
+        tr.trim(pick1 - pre,
+            pick1 + pos)
+        data1 = tr
+        
         for j in range(len(data)):
             if i == j:
                 continue
 
             evid2, pick2, data2 = data[j]
-            data2 = pre_process(pick2, data2, args, True)
+            tr = data2.copy()
+            tr.detrend()
+            tr.trim(pick2 - pre - (args.correction_shift if args.correction else 0.0),
+                pick2 + pos + (args.correction_shift if args.correction else 0.0))
+            data2 = tr
 
             # --------------------------------
             # Daqui para baixo é sua correlação
