@@ -902,6 +902,7 @@ def build_ref_corr(data, args):
             )
 
             write_to_SAC(data, result)
+    return None
 
 
 def build_ref_waveform(data, results, labels, args):
@@ -1064,7 +1065,7 @@ def build_ref_waveform(data, results, labels, args):
         return
 
     plt.show()
-    return
+    return None
     
     
 ##################
@@ -1169,3 +1170,6 @@ if __name__ == '__main__':
         build_ref_waveform(data, results, labels, args)
 
     sys.exit(0)
+    
+    
+    
