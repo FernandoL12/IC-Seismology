@@ -293,7 +293,7 @@ def load_event(event, args):
             if args.verbose:
                 print(f'I:> Requesting {N}.{S}.{L}.{C} from {start} to {end}')
 
-            st = args.dfdsn.get_waveforms(N,S,L,C, start, end)
+            st = args.dfdsn.get_waveforms(N,S,L,C, start, end, attach_response=True)
 
         except fdsn.header.FDSNNoDataException as E:
             raise LoadError(str(E))
@@ -373,7 +373,6 @@ def pre_process(pick, trace, args, add_corr_margin):
     _,pre,pos = args.window
 
     tr = trace.copy()
-
     tr.detrend()
 
     if args.low_pass is None and args.high_pass is not None:
@@ -430,8 +429,10 @@ def build_corr_matrix(data, args):
 
             if args.correction and i != j:
                 # Correlate
-                corr = correlate(data1.data, data2.data, mode='valid')
-                lags = correlation_lags(len(data1.data), len(data2.data), mode='valid')
+                # ~ dd1 = data1.copy().taper(0.5)
+                dd1 = data1.copy()
+                corr = correlate(dd1.data, data2.data, mode='valid')
+                lags = correlation_lags(len(dd1.data), len(data2.data), mode='valid')
 
                 # Upscalling the correlation 
                 index = np.argmax(corr)
@@ -458,6 +459,8 @@ def build_corr_matrix(data, args):
 
             data1 = npts_cut(data1, t0 = pick1 - pre, length = (pre + pos))
             data2 = npts_cut(data2, t0 = pick2 - pre + OFFSET, npts = data1.stats.npts)
+            # ~ data1.taper(0.5)
+            # ~ data2.taper(0.5)
             corr_coef = np.abs(np.corrcoef(data1.data, data2.data)[0][1])
 
             if args.verbose:
@@ -981,7 +984,7 @@ def build_ref_waveform(data, results, labels, args):
 
         # Title
         ax.set_title(
-            f"After correlation\n{evid1} -x- {evid2}",
+            f"After correlation\n{evid1} -x- {evid2} ({r.M:.2f})",
             fontsize=12
         )
 
@@ -1087,7 +1090,7 @@ if __name__ == '__main__':
     #
     args.window = parse_phase(args.window)
 
-    if not args.matrix and not args.correlation and not args.waveform:
+    if not args.matrix and not args.correlation and not args.waveform and not args.sac:
         print('E:> Nothing to do', file = sys.stderr)
         sys.exit(1)
 
