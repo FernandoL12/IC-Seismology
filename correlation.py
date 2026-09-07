@@ -386,8 +386,8 @@ def pre_process(pick, trace, args, add_corr_margin):
             pick + pos + (args.correction_shift if add_corr_margin and args.correction else 0.0))
 
     return tr
-
-
+    
+    
 def build_corr_matrix(data, args):
     """
     Cross correlate input data using the given readed files and arguments.
@@ -460,7 +460,9 @@ def build_corr_matrix(data, args):
             data1 = npts_cut(data1, t0 = pick1 - pre, length = (pre + pos))
             data2 = npts_cut(data2, t0 = pick2 - pre + OFFSET, npts = data1.stats.npts)
             # ~ data1.taper(0.5)
+            data1.taper(max_percentage=0.5, type='hann', side='left')
             # ~ data2.taper(0.5)
+            data2.taper(max_percentage=0.5, type='hann', side='left')
             corr_coef = np.abs(np.corrcoef(data1.data, data2.data)[0][1])
 
             if args.verbose:
