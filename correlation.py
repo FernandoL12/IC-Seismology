@@ -460,9 +460,9 @@ def build_corr_matrix(data, args):
             data1 = npts_cut(data1, t0 = pick1 - pre, length = (pre + pos))
             data2 = npts_cut(data2, t0 = pick2 - pre + OFFSET, npts = data1.stats.npts)
             # ~ data1.taper(0.5)
-            data1.taper(max_percentage=0.5, type='hann', side='left')
+            #data1.taper(max_percentage=0.5, type='hann', side='left')
             # ~ data2.taper(0.5)
-            data2.taper(max_percentage=0.5, type='hann', side='left')
+            #data2.taper(max_percentage=0.5, type='hann', side='left')
             corr_coef = np.abs(np.corrcoef(data1.data, data2.data)[0][1])
 
             if args.verbose:
@@ -482,7 +482,12 @@ def build_corr_matrix(data, args):
                                 })
 
             results.append(result)
-
+            
+            # ~ data1.taper(0.5)
+            data1.taper(max_percentage=0.5, type='hann', side='left')
+            # ~ data2.taper(0.5)
+            data2.taper(max_percentage=0.5, type='hann', side='left')
+            
     return results, [ evid for evid,_,_ in data ]
 
 
@@ -513,7 +518,7 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
         cmap  = cmap,
         vmin  = 0.0,
         vmax  = 1,#np.nanmax(heat),
-        annot = True,
+        annot = False,
         ax    = ax,
         xticklabels = labels,
         yticklabels = labels,
@@ -528,18 +533,19 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
     except:
         comp = False
     if args.matrixmode == 'corr':
-        ax.set_title(f'Correlation matrix{f" | {C[-1]} component" if comp else ""} {" (corrected)" if args.correction else ""}\nNº of events: {size}', fontsize=15)
+        title = f'Correlation matrix{f" | {C[-1]} component" if comp else ""} {" (corrected)" if args.correction else ""}\nNº of events: {size}'
+        ax.set_title(f'{title}', fontsize=15)
     else:
         ax.set_title(f'Lag matrix\nNº of events: {size}', fontsize=15)
 
     plt.tight_layout()
     
     if args.save:
-        if args.verbose:
-            print(f'I:> Save matrix correlation plot to matrix-corr.png')
         lp = args.low_pass
         hp = args.high_pass
         plt.savefig(f"matrix-corr_{hp}-{lp}.png")
+        if args.verbose:
+            print(f'I:> Save matrix correlation plot to matrix-corr_{hp}-{lp}.png')
         return
 
     plt.show()
