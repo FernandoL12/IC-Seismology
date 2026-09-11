@@ -30,6 +30,8 @@ warnings.filterwarnings("ignore")
 ###############
 ## Functions ##
 ###############
+# Example of terminal line:
+# python3 correlation.py -v -S LDASE -w P/0.2/0.7 -c -cs 0.05 $(awk '{print $1}' ../TG2/Code/Londrina.txt) -hp 8 -lp 15 -F http://10.110.0.134  --matrix --histogram --save --sac --ref usp2018blwx
 
 # IO
 class LoadError(BaseException):
@@ -102,6 +104,9 @@ def cmdline():
 
     g4.add_argument('--pair', type = str, default = None, 
                     help = 'Indicate correlation plot pair labels.')
+                    
+    g4.add_argument('--histogram', action = 'store_true',
+                    help = 'Show offset histogram for a ref event')
 
     g4.add_argument('--waveform', action = 'store_true', 
                     help = 'Show waveforms results.')
@@ -533,8 +538,13 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
     except:
         comp = False
     if args.matrixmode == 'corr':
-        title = f'Correlation matrix{f" | {C[-1]} component" if comp else ""} {" (corrected)" if args.correction else ""}\nNº of events: {size}'
-        ax.set_title(f'{title}', fontsize=15)
+        if size <= 35:
+            title = f'Correlation matrix{f" | {C[-1]} component" if comp else ""} {" (corrected)" if args.correction else ""}\nNº of events: {size}'
+            ax.set_title(f'{title}', fontsize=15)
+        else:
+            title = f'Correlation matrix{f" | {C[-1]} component" if comp else ""} {" (corrected)" if args.correction else ""}\nNº of events: {size}'
+            ax.set_title(f'{title}', fontsize=12)
+    # Offset matrix
     else:
         ax.set_title(f'Lag matrix\nNº of events: {size}', fontsize=15)
 
@@ -546,13 +556,12 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
         plt.savefig(f"matrix-corr_{hp}-{lp}.png")
         if args.verbose:
             print(f'I:> Save matrix correlation plot to matrix-corr_{hp}-{lp}.png')
-        return
+        return None
 
     plt.show()
+    return None
 
-    return
-
-
+    
 def plot_waveforms(data, results, labels, args):
     """
     Plot waveforms wiggle correlated
@@ -766,28 +775,28 @@ def write_to_SAC(data, result, output_dir="SAC"):
     tr = result.data2.copy()
 
     # Get original and corrected picks
-    pick_original = pick2
+    pick_original  = pick2
     pick_corrected = pick2 + result.OFFSET
 
     # Put original and correted pick in relative time
     # The reference is the start of the Event 2 trace
     reference_time = tr.stats.starttime
 
-    t1 = pick_original - reference_time
+    t1 = pick_original  - reference_time
     t2 = pick_corrected - reference_time
 
     # Convert Event 2 trace (tr)
     #   ObsPy Trace -> SACTrace
     sac = SACTrace.from_obspy_trace(tr)
 
-    sac.t1 = float(t1)
-    sac.t2 = float(t2)
+    sac.t1  = float(t1)
+    sac.t2  = float(t2)
 
     sac.kt1 = "P_ORIG"
     sac.kt2 = "P_CORR"
 
     # Store offset for more infor if needed
-    sac.user0 = float(result.OFFSET)
+    sac.user0  = float(result.OFFSET)
     sac.kuser0 = "CC_OFFSET"
     
 
@@ -828,14 +837,71 @@ def write_to_SAC(data, result, output_dir="SAC"):
     return filepath
 
 
+def plot_hist(results, args):
+    '''
+    Generates an histogram based on the offset values of correlation
+    correction. Also generates the percentage histogram beside
+    '''
+    
+    # Get event ID, offset, and filters
+    ev1 = args.ref
+    
+    off_list = []
+    for r in results:
+        off_list.append(r.OFFSET)
+    
+    lp = args.low_pass
+    hp = args.high_pass
+    
+    # Plot histogram
+    fig, axs = plt.subplots(nrows=1, ncols=2, tight_layout=True)
+    
+    n_bins = int(np.log2(len(off_list)) + 1)    
+    N, bins, patches = axs[0].hist(off_list, bins=n_bins)
+    
+    fracs = N/ N.max()
+    if fracs.max() == fracs.min():
+        norm = lambda x: 0.5
+    else:
+        norm = lambda x: (x-fracs.min())/(fracs.max()-fracs.min())  
+    
+    cor = 'viridis'
+    for thisfrac, thispatch in zip(fracs, patches):
+        color = plt.colormaps[cor](norm(thisfrac))
+        thispatch.set_facecolor(color)
+    sm = plt.cm.ScalarMappable(cmap=cor)
+    sm.set_array(fracs)
+    fig.colorbar(sm, ax=axs[1], label='Relative frequency')
+    
+    axs[0].set_ylabel('Count per bin')
+    axs[0].set_xlabel('OFFSET value')
+    
+    axs[1].hist(off_list, bins=n_bins, weights=np.ones(len(off_list))*100/len(off_list))
+    axs[1].set_ylabel('Percentage (%)')
+    axs[1].set_xlabel('OFFSET value')
+    
+    # Save
+    if args.save:
+        filename = f"off-histogram_{ev1}_{hp}-{lp}.png"
+        plt.savefig(filename)
+        print(f"Saving histogram to file {filename}")
+        return None
+        
+    plt.show()
+    return None
+
+
 def build_ref_corr(data, args):
     """
-    Cross correlate only the reference events against all input events.
+    Cross correlate only the reference events against all input events
+    to write SAC files.
     """
 
     _, pre, pos = args.window
     ref_list = args.ref.split()
-
+    
+    results = []
+    
     for i in range(len(data)):
         evid1, pick1, data1 = data[i]
 
@@ -845,8 +911,7 @@ def build_ref_corr(data, args):
         _,pre,pos = args.window
         tr = data1.copy()
         tr.detrend()
-        tr.trim(pick1 - pre,
-            pick1 + pos)
+        tr.trim(pick1 - pre, pick1 + pos)
         data1 = tr
         
         for j in range(len(data)):
@@ -859,10 +924,6 @@ def build_ref_corr(data, args):
             tr.trim(pick2 - pre - (args.correction_shift if args.correction else 0.0),
                 pick2 + pos + (args.correction_shift if args.correction else 0.0))
             data2 = tr
-
-            # --------------------------------
-            # Daqui para baixo é sua correlação
-            # --------------------------------
 
             OFFSET = 0.0
             rs1 = 0.0
@@ -889,10 +950,10 @@ def build_ref_corr(data, args):
                     lag_3 = lags[index-1:index+2]
                     corr3 = corr[index-1:index+2]
 
-                    a,b,c     = np.polyfit(lag_3*dt, corr3, deg=2)
-                    x = -b / (2*a)
-                    lag_maxi = x
-                    corr_maxi = a*x**2 + b*x + c
+                    a,b,c     =  np.polyfit(lag_3*dt, corr3, deg=2)
+                    x         = -b / (2*a)
+                    lag_maxi  =  x
+                    corr_maxi =  a*x**2 + b*x + c
 
                 rs1 = data1.times('utcdatetime')[0]
                 rs2 = data2.times('utcdatetime')[0]
@@ -913,7 +974,8 @@ def build_ref_corr(data, args):
                                 'OFFSET': OFFSET,
                                 'M': corr_coef
                                 })
-
+            results.append(result)
+            
             print(
                 f"Reference: {evid1} | "
                 f"Event: {evid2} | "
@@ -921,7 +983,10 @@ def build_ref_corr(data, args):
                 f"CORR={corr_coef:+9.4f}"
             )
 
-            write_to_SAC(data, result)
+            if args.sac:
+                write_to_SAC(data, result)
+        if args.histogram:
+            plot_hist(results, args)
     return None
 
 
@@ -1086,8 +1151,8 @@ def build_ref_waveform(data, results, labels, args):
 
     plt.show()
     return None
-    
-    
+
+
 ##################
 ##     Main     ##
 ##################
@@ -1183,6 +1248,10 @@ if __name__ == '__main__':
     # Seismograms plot
     if args.correlation:
         plot_correlation(data, results, labels, args)
+        
+    # Histogram plot
+    if args.histogram:
+        build_ref_corr(data, args)
         
     # SAC Output
     if args.sac:
