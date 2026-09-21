@@ -31,7 +31,11 @@ warnings.filterwarnings("ignore")
 ## Functions ##
 ###############
 # Example of terminal line:
+# Londrina
 # python3 correlation.py -v -S LDASE -w P/0.2/0.7 -c -cs 0.05 $(awk '{print $1}' ../TG2/Code/Londrina.txt) -hp 8 -lp 15 -F http://10.110.0.134  --matrix --histogram --save --sac --ref usp2018blwx
+###
+# Frutal
+# python3 correlation.py -v -c -cs 0.1 -S BB19B -w P/0.25/1  $(awk '{print $1}' ../TG2/Code/Frutal.txt) -hp 8 -lp 15 -F http://10.110.0.134  --matrix --save --histogram --sac --ref usp2026cbmu
 
 # IO
 class LoadError(BaseException):
@@ -470,8 +474,8 @@ def build_corr_matrix(data, args):
             #data2.taper(max_percentage=0.5, type='hann', side='left')
             corr_coef = np.abs(np.corrcoef(data1.data, data2.data)[0][1])
 
-            if args.verbose:
-                print(f"I:> For i={i:03d} j={j:03d} evA={evid1:18s} evB={evid2:18s} OFFSET={OFFSET:+8.3f} CORR_COEF={corr_coef:+9.4f}")
+            # ~ if args.verbose and args.correction:
+                # ~ print(f"I:> For i={i:03d} j={j:03d} evA={evid1:18s} evB={evid2:18s} OFFSET={OFFSET:+8.3f} CORR_COEF={corr_coef:+9.4f}")
                 
             # Store the correlation results for the current event pair
             result = AttribDict({
@@ -489,9 +493,9 @@ def build_corr_matrix(data, args):
             results.append(result)
             
             # ~ data1.taper(0.5)
-            data1.taper(max_percentage=0.5, type='hann', side='left')
+            # ~ data1.taper(max_percentage=0.5, type='hann', side='left')
             # ~ data2.taper(0.5)
-            data2.taper(max_percentage=0.5, type='hann', side='left')
+            # ~ data2.taper(max_percentage=0.5, type='hann', side='left')
             
     return results, [ evid for evid,_,_ in data ]
 
@@ -518,6 +522,9 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
 
     cmap.set_bad('#48494B')
 
+    ylabels = [label if i % 2 == 0 else '' for i, label in enumerate(labels)]
+    xlabels = [label if i % 2 == 1 else '' for i, label in enumerate(labels)]
+
     sns.heatmap(
         heat,
         cmap  = cmap,
@@ -525,12 +532,12 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
         vmax  = 1,#np.nanmax(heat),
         annot = False,
         ax    = ax,
-        xticklabels = labels,
-        yticklabels = labels,
+        xticklabels = xlabels,
+        yticklabels = ylabels,
         cbar_kws = {'label': 'Correlation value' if args.matrixmode == 'corr' else 'Correlation Lag [s]' }
     )
     
-    plt.setp(ax.get_xticklabels(), rotation=45, ha='center')
+    plt.setp(ax.get_xticklabels(), rotation=90, ha='center')
     ax.figure.axes[-1].yaxis.label.set_size(12)
     try:
         N,S,L,C = args.station.split(".")
@@ -842,7 +849,8 @@ def plot_hist(results, args):
     Generates an histogram based on the offset values of correlation
     correction. Also generates the percentage histogram beside
     '''
-    
+    from matplotlib.ticker import StrMethodFormatter
+
     # Get event ID, offset, and filters
     ev1 = args.ref
     
@@ -854,31 +862,22 @@ def plot_hist(results, args):
     hp = args.high_pass
     
     # Plot histogram
-    fig, axs = plt.subplots(nrows=1, ncols=2, tight_layout=True)
+    fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(12, 5), tight_layout=True)
     
     n_bins = int(np.log2(len(off_list)) + 1)    
-    N, bins, patches = axs[0].hist(off_list, bins=n_bins)
+    N, bins, patches = axs[0].hist(off_list, bins=n_bins, edgecolor='black')
+    bin_centers = (bins[:-1] + bins[1:]) / 2
     
-    fracs = N/ N.max()
-    if fracs.max() == fracs.min():
-        norm = lambda x: 0.5
-    else:
-        norm = lambda x: (x-fracs.min())/(fracs.max()-fracs.min())  
-    
-    cor = 'viridis'
-    for thisfrac, thispatch in zip(fracs, patches):
-        color = plt.colormaps[cor](norm(thisfrac))
-        thispatch.set_facecolor(color)
-    sm = plt.cm.ScalarMappable(cmap=cor)
-    sm.set_array(fracs)
-    fig.colorbar(sm, ax=axs[1], label='Relative frequency')
-    
-    axs[0].set_ylabel('Count per bin')
+    axs[0].set_ylabel('Number of corrections')
     axs[0].set_xlabel('OFFSET value')
+    axs[0].set_xticks(bin_centers)
+    axs[0].xaxis.set_major_formatter(StrMethodFormatter('{x:.2f}'))    
     
-    axs[1].hist(off_list, bins=n_bins, weights=np.ones(len(off_list))*100/len(off_list))
+    axs[1].hist(off_list, bins=bins, weights=np.ones(len(off_list))*100/len(off_list), edgecolor='black')
     axs[1].set_ylabel('Percentage (%)')
     axs[1].set_xlabel('OFFSET value')
+    axs[1].set_xticks(bin_centers)
+    axs[1].xaxis.set_major_formatter(StrMethodFormatter('{x:.2f}'))
     
     # Save
     if args.save:
@@ -976,12 +975,12 @@ def build_ref_corr(data, args):
                                 })
             results.append(result)
             
-            print(
-                f"Reference: {evid1} | "
-                f"Event: {evid2} | "
-                f"OFFSET={OFFSET:+8.3f} | "
-                f"CORR={corr_coef:+9.4f}"
-            )
+            # ~ print(
+                # ~ f"Reference: {evid1} | "
+                # ~ f"Event: {evid2} | "
+                # ~ f"OFFSET={OFFSET:+8.3f} | "
+                # ~ f"CORR={corr_coef:+9.4f}"
+            # ~ )
 
             if args.sac:
                 write_to_SAC(data, result)
@@ -1181,13 +1180,13 @@ if __name__ == '__main__':
             continue
 
         # Warns: if different stations are considered!
-        for e,p,d in data[:-1]:
-            if data[-1][2].id != d.id:
-                print(f'W:> Current id {data[-1][2].id} @ event {data[-1][0]} differ from id {d.id} @ event {e}.', file = sys.stderr)
+        # ~ for e,p,d in data[:-1]:
+            # ~ if data[-1][2].id != d.id:
+                # ~ print(f'W:> Current id {data[-1][2].id} @ event {data[-1][0]} differ from id {d.id} @ event {e}.', file = sys.stderr)
 
-            if data[-1][2].stats.delta != d.stats.delta:
-                print(f'E:> Current delta {data[-1][2].stats.delta} @ event {data[-1][0]} differ from delta {d.stats.delta} @ event {e} -- will abort computation.', file = sys.stderr)
-                stop = True
+            # ~ if data[-1][2].stats.delta != d.stats.delta:
+                # ~ print(f'E:> Current delta {data[-1][2].stats.delta} @ event {data[-1][0]} differ from delta {d.stats.delta} @ event {e} -- will abort computation.', file = sys.stderr)
+                # ~ stop = True
 
     # Sort data chronologically
     data.sort(key= lambda x: x[1])
@@ -1250,7 +1249,7 @@ if __name__ == '__main__':
         plot_correlation(data, results, labels, args)
         
     # Histogram plot
-    if args.histogram:
+    if args.histogram and args.correction:
         build_ref_corr(data, args)
         
     # SAC Output
