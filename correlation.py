@@ -511,6 +511,10 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
     """
 
     size = len(data)
+    
+    temp = np.copy(labels)
+    for i, lab in enumerate(temp):
+        labels[i] = labels[i][5:]        
 
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=figsize)
 
@@ -518,7 +522,7 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
     heat = np.ones([size, size])
     heat[:,:] = np.nan
     for r in results:
-        heat[r.i][r.j] = r.M if args.matrixmode == 'corr' else r.OFFSET
+        heat[r.j][r.i] = r.M if args.matrixmode == 'corr' else r.OFFSET
 
     cmap.set_bad('#48494B')
 
