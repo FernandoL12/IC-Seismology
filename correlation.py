@@ -35,6 +35,7 @@ warnings.filterwarnings("ignore")
 # python3 correlation.py -v -S LDASE -w P/0.2/0.7 -c -cs 0.05 $(awk '{print $1}' ../TG2/Code/Londrina.txt) -hp 8 -lp 15 -F http://10.110.0.134 --matrix --cluster 0.8 --histogram --save --sac --ref-waveform --ref usp2018boet
 ###
 # Frutal
+# python3 correlation.py -v -S BB19B -w P/0.25/3 -c -cs 0.1 $(awk '{print $1}' ../TG2/Code/Frutal.txt) -hp 8 -lp 15 -F http://10.110.0.134 --matrix --cluster 0.8 --histogram --save --sac --ref-waveform --ref usp2026cbmu
 # python3 correlation.py -v -c -cs 0.1 -S BB19B -w P/0.25/1  $(awk '{print $1}' ../TG2/Code/Frutal.txt) -hp 8 -lp 15 -F http://10.110.0.134  --matrix --save --histogram --sac --ref usp2026cbmu
 
 # IO
@@ -522,7 +523,7 @@ def build_corr_matrix(data, args):
     return results, [ evid for evid,_,_ in data ]
 
 
-def select_corr_clusters(results, labels, threshold=0.8, min_size=2):
+def select_corr_clusters(results, labels, threshold=0.8, min_size=4):
     """
     Select clusters of events based on correlation coefficients.
 
