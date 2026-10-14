@@ -32,7 +32,7 @@ warnings.filterwarnings("ignore")
 ###############
 # Example of terminal line:
 # Londrina
-# python3 correlation.py -v -S LDASE -w P/0.2/0.7 -c -cs 0.05 $(awk '{print $1}' ../TG2/Code/Londrina.txt) -hp 8 -lp 15 -F http://10.110.0.134  --matrix --histogram --save --sac --ref usp2018blwx
+# python3 correlation.py -v -S LDASE -w P/0.2/0.7 -c -cs 0.05 $(awk '{print $1}' ../TG2/Code/Londrina.txt) -hp 8 -lp 15 -F http://10.110.0.134 --matrix --cluster 0.8 --histogram --save --sac --ref-waveform --ref usp2018boet
 ###
 # Frutal
 # python3 correlation.py -v -c -cs 0.1 -S BB19B -w P/0.25/1  $(awk '{print $1}' ../TG2/Code/Frutal.txt) -hp 8 -lp 15 -F http://10.110.0.134  --matrix --save --histogram --sac --ref usp2026cbmu
@@ -51,6 +51,7 @@ def cmdline():
 
     # General Parameters
     g0 = parser.add_argument_group('General')
+    
     g0.add_argument('-v', '--verbose', action='store_true',
                     help = 'Be verbose')
 
@@ -62,7 +63,7 @@ def cmdline():
 
     g0.add_argument('events', nargs='+',
                     help='Id of one or more events to process.')
-
+        
 
     # Correlation parameters
     g1 = parser.add_argument_group('Correlation Parameters')
@@ -72,7 +73,10 @@ def cmdline():
 
     g1.add_argument('-cs', '--correction-shift', default = 0.05, type = float,
                     help = 'Amount of shift allowed while searching for the max correlation in a given window.')
-
+    
+    g1.add_argument('--cluster', nargs='?', const=0.8, default=None, type=float, metavar='THRESHOLD',
+                help='Identify event clusters using the given correlation threshold.')
+                
 
     # Filters
     g2 = parser.add_argument_group('Data Processing Parameters')
@@ -109,14 +113,17 @@ def cmdline():
     g4.add_argument('--pair', type = str, default = None, 
                     help = 'Indicate correlation plot pair labels.')
                     
-    g4.add_argument('--histogram', action = 'store_true',
-                    help = 'Show offset histogram for a ref event')
+    g4.add_argument('--histogram', action='store_true',
+                    help='Show OFFSET histograms for all event pairs and selected references.')
 
     g4.add_argument('--waveform', action = 'store_true', 
                     help = 'Show waveforms results.')
 
     g4.add_argument('--waveform-cols', type = int, default = 3, 
                     help = 'Number of columns in waveform plot.')
+    
+    g4.add_argument('--ref-waveform', action='store_true',
+                help='Show waveforms aligned to the selected reference events.')
 
     g4.add_argument('--save', action = 'store_true',
                     help = 'Instead of showing in screen, save to disk images.')
@@ -128,11 +135,23 @@ def cmdline():
     g5.add_argument('--sac', action= 'store_true',
                     help = 'Store corrected pick in a SAC file')
 
-    g5.add_argument('--ref', default = None,
-                    help = 'Use an Event as reference to correct others')
+    g5.add_argument('--ref', nargs='?', const='auto', default=None, metavar='EVID',
+                help='Use an event as reference. Without an ID, select automatically.')
 
     # Process
     args = parser.parse_args()
+
+    if args.cluster is not None and not 0.0 <= args.cluster <= 1.0:
+        parser.error('--cluster threshold must be between 0 and 1')
+
+    if args.sac and not args.correction:
+        parser.error('--sac requires -c/--correction')
+
+    if args.histogram and not args.correction:
+        parser.error('--histogram requires -c/--correction')
+
+    if (args.sac or args.ref_waveform) and args.ref is None:
+        parser.error('This operation requires --ref EVID or --ref without an ID for automatic selection')
 
     return args
 
@@ -418,6 +437,9 @@ def build_corr_matrix(data, args):
             print(f'I:>  Frequency filter set to {args.high_pass if args.high_pass else "None"} < f < {args.low_pass  if args.low_pass else "None"}')
         else:
             print(f'I:>  No filter will be applied')
+        if args.cluster is not None or args.ref == 'auto':
+            threshold = args.cluster if args.cluster is not None else 0.8
+            print(f'I:>  Cluster correlation threshold: {threshold:.2f}')
         print(f'')
 
     for i in range(size):
@@ -500,6 +522,152 @@ def build_corr_matrix(data, args):
     return results, [ evid for evid,_,_ in data ]
 
 
+def select_corr_clusters(results, labels, threshold=0.8, min_size=2):
+    """
+    Select clusters of events based on correlation coefficients.
+
+    Events are connected when their correlation is greater than
+    or equal to the given threshold. Clusters are defined as the
+    connected components of the resulting graph.
+
+    Parameters
+    ----------
+    results : list
+        Correlation results returned by build_corr_matrix().
+
+    labels : list
+        Event IDs returned by build_corr_matrix().
+
+    threshold : float
+        Minimum correlation required to connect two events.
+
+    min_size : int
+        Minimum number of events required to retain a cluster.
+
+    Returns
+    -------
+    list
+        List of clusters, each containing event IDs.
+    """
+
+    size = len(labels)
+
+    # Build adjacency list
+    graph = [[] for _ in range(size)]
+
+    for r in results:
+        if r.M >= threshold:
+            graph[r.i].append(r.j)
+            graph[r.j].append(r.i)
+
+    # Find connected components
+    visited = set()
+    clusters = []
+
+    for i in range(size):
+        if i in visited:
+            continue
+
+        cluster = []
+        stack = [i]
+        visited.add(i)
+
+        while stack:
+            node = stack.pop()
+            cluster.append(labels[node])
+
+            for neighbor in graph[node]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    stack.append(neighbor)
+
+        if len(cluster) >= min_size:
+            clusters.append(cluster)
+
+    # Sort clusters by number of events
+    clusters.sort(key=len, reverse=True)
+
+    return clusters
+    
+    
+    
+def select_cluster_reference(cluster, results, labels, threshold=0.8):
+    """
+    Rank events within a cluster by their suitability as reference candidates.
+
+    Candidates are ranked by the number of directly correlated events,
+    followed by their mean and minimum correlation with other cluster
+    members. The pick quality must be evaluated separately.
+
+    Parameters
+    ----------
+    cluster : list
+        Event IDs belonging to a cluster.
+
+    results : list
+        Correlation results returned by build_corr_matrix().
+
+    labels : list
+        Event IDs returned by build_corr_matrix().
+
+    threshold : float
+        Minimum positive correlation used to count directly correlated
+        events.
+
+    Returns
+    -------
+    list
+        List of dictionaries containing the event ID and correlation
+        statistics, sorted from the best to the worst candidate.
+    """
+
+    label_to_index = {label: i for i, label in enumerate(labels)}
+    cluster_indices = [label_to_index[label] for label in cluster]
+
+    corr = {}
+
+    for r in results:
+        pair = (min(r.i, r.j), max(r.i, r.j))
+        corr[pair] = r.M
+
+    candidates = []
+
+    for i in cluster_indices:
+        values = []
+
+        for j in cluster_indices:
+            if i == j:
+                continue
+
+            pair = (min(i, j), max(i, j))
+
+            if pair in corr and np.isfinite(corr[pair]):
+                values.append(corr[pair])
+
+        if not values:
+            continue
+
+        n_correlated = sum(value >= threshold for value in values)
+
+        candidates.append({
+            'event': labels[i],
+            'n_correlated': n_correlated,
+            'n_compared': len(values),
+            'fraction_correlated': n_correlated / len(values),
+            'mean_corr': np.mean(values),
+            'min_corr': np.min(values)
+        })
+
+    candidates.sort(key=lambda c: (
+                                    c['n_correlated'],
+                                    c['mean_corr'],
+                                    c['min_corr']
+                                  ), reverse=True
+                    )
+
+    return candidates
+    
+    
 # Plot
 def N(data):
     return data / np.max(np.abs(data))
@@ -522,6 +690,7 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
     heat = np.ones([size, size])
     heat[:,:] = np.nan
     for r in results:
+        heat[r.i][r.j] = r.M if args.matrixmode == 'corr' else r.OFFSET
         heat[r.j][r.i] = r.M if args.matrixmode == 'corr' else r.OFFSET
 
     cmap.set_bad('#48494B')
@@ -564,9 +733,17 @@ def plot_matrix(data, results, labels, args, figsize=(7,6), cmap=plt.cm.RdYlGn):
     if args.save:
         lp = args.low_pass
         hp = args.high_pass
-        plt.savefig(f"matrix-corr_{hp}-{lp}.png")
+
+        folder = "matrices"
+        os.makedirs(folder, exist_ok=True)
+
+        filename = os.path.join(folder, f"matrix-corr_{hp}-{lp}.png")
+        fig.savefig(filename, bbox_inches="tight")
+
         if args.verbose:
-            print(f'I:> Save matrix correlation plot to matrix-corr_{hp}-{lp}.png')
+            print(f'I:> Save matrix correlation plot to {filename}')
+
+        plt.close(fig)
         return None
 
     plt.show()
@@ -650,13 +827,20 @@ def plot_waveforms(data, results, labels, args):
     plt.tight_layout()
 
     if args.save:
+        folder = "waveforms"
+        os.makedirs(folder, exist_ok=True)
+
+        filename = os.path.join(folder, "all-wave-graphs.png")
+        fig.savefig(filename, bbox_inches="tight")
+
         if args.verbose:
-            print(f'I:> Save waveforms plot to all-graphs.png')
-        plt.savefig(f"all-wave-graphs.png")
-        return
+            print(f'I:> Save waveforms plot to {filename}')
+
+        plt.close(fig)
+        return None
 
     plt.show()
-    return
+    return None
 
 
 def plot_correlation(data, results, labels, args):
@@ -742,8 +926,15 @@ def plot_correlation(data, results, labels, args):
     plt.tight_layout()
 
     if args.save:
-        print(f'Saving figure to file cross-{evid1}x{evid2}.png')
-        plt.savefig(f"cross-{evid1}X{evid2}.png")
+        folder = "correlations"
+        os.makedirs(folder, exist_ok=True)
+
+        filename = os.path.join(folder, f"cross-{evid1}X{evid2}.png")
+        fig.savefig(filename, bbox_inches="tight")
+
+        print(f'Saving figure to file {filename}')
+
+        plt.close(fig)
         return
 
     plt.show()
@@ -754,71 +945,79 @@ def plot_correlation(data, results, labels, args):
 # Output
 def write_to_SAC(data, result, output_dir="SAC"):
     """
-    Store the original and corrected P picks in the SAC header.
+    Write the corrected waveform and correlation metadata to a SAC file.
 
-    SAC markers:
-        T1  -> original P pick
-        T2  -> corrected P pick
-        KT1 -> P_ORIG
-        KT2 -> P_CORR
-
-    Additional information:
-        USER0  -> correlation OFFSET
-        KUSER0 -> CC_OFFSET
+    The SAC header stores:
+        T1 / KT1 --> Original P pick / P_ORIG
+        T2 / KT2 --> Corrected P pick / P_CORR
+        USER0 / KUSER0 --> Time correction (offset) / CC_OFFSET
+        USER1 / KUSER1 --> Correlation coefficient before correction / CC_BEFORE
+        USER2 / KUSER2 --> Correlation coefficient after correction / CC_AFTER
 
     Parameters
     ----------
     data : list
-        Original data list returned by load_event().
+        List of events, each containing the event ID, P-wave pick and waveform.
+        
+    result : AttribDict
+        Correlation result containing event indices, time offset and correlation
+        coefficients before and after correction.
+        
+    output_dir : str, optional
+        Directory where the SAC file will be saved. Defaults to "SAC".
 
-    result : obspy.core.util.attribdict.AttribDict
-        Single correlation result returned by build_corr_matrix().
-
-    output_dir : str
-        Directory where the SAC file will be saved.
+    Returns
+    -------
+    filepath: str
+        Path to the written SAC file.
     """
-
-    # Get event ID and pick time
+    
+    # Get event1 and event2 ID and pick time
     evid1, pick1, _ = data[result.i]
     evid2, pick2, _ = data[result.j]
-
-    # Get the trimmed waveform of Event 2
+    
+    # Get trimmed waveform of event 2
     tr = result.data2.copy()
 
     # Get original and corrected picks
-    pick_original  = pick2
+    pick_original = pick2
     pick_corrected = pick2 + result.OFFSET
 
-    # Put original and correted pick in relative time
+    # Put original and corrected picks in relative time
     # The reference is the start of the Event 2 trace
     reference_time = tr.stats.starttime
 
-    t1 = pick_original  - reference_time
+    t1 = pick_original - reference_time
     t2 = pick_corrected - reference_time
 
     # Convert Event 2 trace (tr)
     #   ObsPy Trace -> SACTrace
     sac = SACTrace.from_obspy_trace(tr)
 
-    sac.t1  = float(t1)
-    sac.t2  = float(t2)
+    sac.t1 = float(t1)
+    sac.t2 = float(t2)
 
     sac.kt1 = "P_ORIG"
     sac.kt2 = "P_CORR"
 
-    # Store offset for more infor if needed
-    sac.user0  = float(result.OFFSET)
+    # Store offset and correlation coefficients
+    sac.user0 = float(result.OFFSET)
     sac.kuser0 = "CC_OFFSET"
-    
+
+    sac.user1 = float(result.M_before)
+    sac.kuser1 = "CC_BEFORE"
+
+    sac.user2 = float(result.M)
+    sac.kuser2 = "CC_AFTER"
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
     # Identify station code
-    network  = tr.stats.network
-    station  = tr.stats.station
+    network = tr.stats.network
+    station = tr.stats.station
     location = tr.stats.location if tr.stats.location else ""
-    channel  = tr.stats.channel
+    channel = tr.stats.channel
 
     # ------------------------------------------------------------
     # Pair-specific filename
@@ -842,13 +1041,15 @@ def write_to_SAC(data, result, output_dir="SAC"):
             f"I:>   Corrected P   : {pick_corrected}\n"
             f"I:>   T1            : {t1:.6f} s\n"
             f"I:>   T2            : {t2:.6f} s\n"
-            f"I:>   OFFSET        : {result.OFFSET:+.6f} s"
-            )
+            f"I:>   OFFSET        : {result.OFFSET:+.6f} s\n"
+            f"I:>   CC before     : {result.M_before:.6f}\n"
+            f"I:>   CC after      : {result.M:.6f}"
+        )
 
     return filepath
 
 
-def plot_hist(results, args):
+def plot_hist(results, args, ref_id=None):
     '''
     Generates an histogram based on the offset values of correlation
     correction. Also generates the percentage histogram beside
@@ -856,7 +1057,7 @@ def plot_hist(results, args):
     from matplotlib.ticker import StrMethodFormatter
 
     # Get event ID, offset, and filters
-    ev1 = args.ref
+    ev1 = ref_id if ref_id is not None else args.ref
     
     off_list = []
     for r in results:
@@ -885,48 +1086,49 @@ def plot_hist(results, args):
     
     # Save
     if args.save:
-        filename = f"off-histogram_{ev1}_{hp}-{lp}.png"
-        plt.savefig(filename)
+        folder = "histograms"
+        os.makedirs(folder, exist_ok=True)
+
+        filename = os.path.join(folder, f"off-histogram_{ev1}_{hp}-{lp}.png")
+        fig.savefig(filename, bbox_inches="tight")
+
         print(f"Saving histogram to file {filename}")
+
+        plt.close(fig)
         return None
         
     plt.show()
     return None
 
 
-def build_ref_corr(data, args):
+def build_ref_corr(data, args, ref_list, ref_targets=None):
     """
     Cross correlate only the reference events against all input events
     to write SAC files.
     """
 
     _, pre, pos = args.window
-    ref_list = args.ref.split()
-    
     results = []
-    
+
     for i in range(len(data)):
         evid1, pick1, data1 = data[i]
 
         if evid1 not in ref_list:
             continue
 
-        _,pre,pos = args.window
-        tr = data1.copy()
-        tr.detrend()
-        tr.trim(pick1 - pre, pick1 + pos)
-        data1 = tr
-        
+        ref_trace = pre_process(pick1, data1, args, False)
+
         for j in range(len(data)):
             if i == j:
                 continue
 
-            evid2, pick2, data2 = data[j]
-            tr = data2.copy()
-            tr.detrend()
-            tr.trim(pick2 - pre - (args.correction_shift if args.correction else 0.0),
-                pick2 + pos + (args.correction_shift if args.correction else 0.0))
-            data2 = tr
+            evid2, pick2, original_trace2 = data[j]
+
+            if ref_targets is not None and evid2 not in ref_targets.get(evid1, set()):
+                continue
+
+            data1 = ref_trace.copy()
+            data2 = pre_process(pick2, original_trace2, args, True)
 
             OFFSET = 0.0
             rs1 = 0.0
@@ -937,222 +1139,222 @@ def build_ref_corr(data, args):
             corr_maxi = 0.0
 
             if args.correction:
-
                 corr = correlate(data1.data, data2.data, mode='valid')
-                lags = correlation_lags(len(data1.data),len(data2.data), mode='valid')
+                lags = correlation_lags(len(data1.data), len(data2.data), mode='valid')
                 index = np.argmax(corr)
                 dt = data1.stats.delta
 
                 if index == 0 or index == len(corr) - 1:
-
                     lag_maxi = lags[index] * dt
                     corr_maxi = corr[index]
-
                 else:
-
                     lag_3 = lags[index-1:index+2]
                     corr3 = corr[index-1:index+2]
-
-                    a,b,c     =  np.polyfit(lag_3*dt, corr3, deg=2)
-                    x         = -b / (2*a)
-                    lag_maxi  =  x
-                    corr_maxi =  a*x**2 + b*x + c
+                    a, b, c = np.polyfit(lag_3*dt, corr3, deg=2)
+                    x = -b / (2*a)
+                    lag_maxi = x
+                    corr_maxi = a*x**2 + b*x + c
 
                 rs1 = data1.times('utcdatetime')[0]
                 rs2 = data2.times('utcdatetime')[0]
-                OFFSET = (pick1 - rs1) - (pick2 - rs2 + lag_maxi)
+                OFFSET = (pick1-rs1) - (pick2-rs2+lag_maxi)
 
-            data1 = npts_cut(data1, t0 = pick1 - pre, length = (pre + pos))
-            data2 = npts_cut(data2, t0 = pick2 - pre + OFFSET, npts = data1.stats.npts)
-            corr_coef = np.abs(np.corrcoef(data1.data, data2.data)[0][1])
+            data1 = npts_cut(data1, t0=pick1-pre, length=(pre+pos))
+            data2_before = npts_cut(data2.copy(), t0=pick2-pre, npts=data1.stats.npts)
+            data2 = npts_cut(data2, t0=pick2-pre+OFFSET, npts=data1.stats.npts)
+
+            corr_before = np.abs(np.corrcoef(data1.data, data2_before.data)[0][1])
+            corr_after = np.abs(np.corrcoef(data1.data, data2.data)[0][1])
 
             result = AttribDict({
-                                'i': i,
-                                'j': j,
-                                'data1': data1,
-                                'data2': data2,
-                                'lags': lags,
-                                'corr': corr,
-                                'lag_maxi': lag_maxi,
-                                'OFFSET': OFFSET,
-                                'M': corr_coef
-                                })
+                'i': i,
+                'j': j,
+                'data1': data1,
+                'data2': data2,
+                'lags': lags,
+                'corr': corr,
+                'lag_maxi': lag_maxi,
+                'OFFSET': OFFSET,
+                'M_before': corr_before,
+                'M': corr_after
+            })
+
             results.append(result)
-            
-            # ~ print(
-                # ~ f"Reference: {evid1} | "
-                # ~ f"Event: {evid2} | "
-                # ~ f"OFFSET={OFFSET:+8.3f} | "
-                # ~ f"CORR={corr_coef:+9.4f}"
-            # ~ )
 
             if args.sac:
                 write_to_SAC(data, result)
-        if args.histogram:
-            plot_hist(results, args)
-    return None
+
+    return results
 
 
-def build_ref_waveform(data, results, labels, args):
+def build_ref_waveform(data, results, labels, args, ref_list, ref_targets):
     """
     Plot waveforms for correlations involving reference events.
     Reference event is always shown as Event 1.
     """
 
     phase, pre, pos = args.window
-    ref_list = args.ref.split()
 
-    # Select results involving reference events
-    ref_results = []
+    # Create one figure for each reference event
+    for ref in ref_list:
+        
+        # Select results involving the current reference
+        ref_results = []
 
-    for r in results:
-        evid1 = data[r.i][0]
-        evid2 = data[r.j][0]
+        for r in results:
+            evid1 = data[r.i][0]
+            evid2 = data[r.j][0]
 
-        if evid1 in ref_list:
-            ref_results.append((r, False))
+            targets = ref_targets.get(ref, set())
 
-        elif evid2 in ref_list:
-            ref_results.append((r, True))
+            if evid1 == ref and evid2 in targets:
+                ref_results.append((r, False))
 
-    # Number of plots and panels
-    ntotal = len(ref_results)
+            elif evid2 == ref and evid1 in targets:
+                ref_results.append((r, True))
 
-    if ntotal == 0:
-        print('W:> No correlation results found for reference events.')
-        return
+        # Number of plots and panels
+        ntotal = len(ref_results)
 
-    ncols = args.waveform_cols if ntotal > args.waveform_cols else ntotal
-    nrows = 1 if ntotal <= args.waveform_cols else ntotal // ncols
+        if ntotal == 0:
+            print(f'W:> No correlation results found for reference {ref}.')
+            continue
 
-    if ncols * nrows < ntotal:
-        nrows += 1
+        ncols = args.waveform_cols if ntotal > args.waveform_cols else ntotal
+        nrows = 1 if ntotal <= args.waveform_cols else ntotal // ncols
 
-    # Plots
-    fig, axs = plt.subplots(
-        nrows=nrows,
-        ncols=ncols,
-        figsize=(ncols * 5, nrows * 3),
-        squeeze=False
-    )
+        if ncols * nrows < ntotal:
+            nrows += 1
 
-    # Working
-    for cont, (r, invert) in enumerate(ref_results):
-
-        row = cont // ncols
-        col = cont % ncols
-
-        evid1, t1, _ = data[r.i]
-        evid2, t2, _ = data[r.j]
-
-        data1 = r.data1
-        data2 = r.data2
-        offset = r.OFFSET
-
-        # Make reference event always Event 1
-        if invert:
-            evid1, evid2 = evid2, evid1
-            t1, t2 = t2, t1
-            data1, data2 = data2, data1
-            offset = -offset
-
-        ax = axs[row][col]
-
-        # Title
-        ax.set_title(
-            f"After correlation\n{evid1} -x- {evid2} ({r.M:.2f})",
-            fontsize=12
+        # Plots
+        fig, axs = plt.subplots(
+            nrows=nrows,
+            ncols=ncols,
+            figsize=(ncols * 5, nrows * 3),
+            squeeze=False
         )
 
-        # Waveforms
-        ax.plot(
-            data2.times('utcdatetime') - t2 - offset,
-            N(data2.data),
-            "--",
-            color='#F97306',
-            label='Event 2'
-        )
+        # Working
+        for cont, (r, invert) in enumerate(ref_results):
 
-        ax.plot(
-            data1.times('utcdatetime') - t1,
-            N(data1.data),
-            color='C0',
-            label='Event 1'
-        )
+            row = cont // ncols
+            col = cont % ncols
 
-        # Picks
-        ax.axvline(
-            0.0,
-            color='limegreen',
-            ls='--',
-            lw=1.2,
-            label='Corrected Pick (2)'
-        )
+            evid1, t1, _ = data[r.i]
+            evid2, t2, _ = data[r.j]
 
-        ax.axvline(
-            0.0,
-            0.05,
-            0.50,
-            color='C0',
-            lw=2
-        )
+            data1 = r.data1
+            data2 = r.data2
+            offset = r.OFFSET
 
-        ax.axvline(
-            -offset,
-            0.55,
-            0.95,
-            color='#F97306',
-            lw=2
-        )
+            # Make reference event always Event 1
+            if invert:
+                evid1, evid2 = evid2, evid1
+                t1, t2 = t2, t1
+                data1, data2 = data2, data1
+                offset = -offset
 
-        # Limits
-        mmin = min(data1.times('utcdatetime') - t1)
-        mmax = max(data1.times('utcdatetime') - t1)
+            ax = axs[row][col]
 
-        mmin -= abs(0.02 * (mmax - mmin))
-        mmax += abs(0.02 * (mmax - mmin))
-
-        ax.set_xlim((mmin, mmax))
-
-        ax.set_xlabel(
-            "Time relative to trace start time (s)",
-            fontsize=10
-        )
-
-        ax.set_ylabel(
-            "Normalized amplitude",
-            fontsize=10
-        )
-
-        ax.grid(alpha=0.4)
-        ax.legend(
-            loc=4,
-            ncols=2,
-            fontsize=8
-        )
-
-    # Remove unused axes
-    for i in range(ntotal, nrows * ncols):
-        row = i // ncols
-        col = i % ncols
-        fig.delaxes(axs[row][col])
-
-    plt.tight_layout()
-
-    if args.save:
-        lp = args.low_pass
-        hp = args.high_pass
-
-        if args.verbose:
-            print(
-                f'I:> Save reference waveforms plot to '
-                f'ref-wave-graphs_{hp}-{lp}.png'
+            # Title
+            ax.set_title(
+                f"After correlation\n{evid1} -x- {evid2} ({r.M:.2f})",
+                fontsize=12
             )
 
-        plt.savefig(f"ref-wave-graphs_{hp}-{lp}.png")
-        return
+            # Waveforms
+            ax.plot(
+                data2.times('utcdatetime') - t2 - offset,
+                N(data2.data),
+                "--",
+                color='#F97306',
+                label='Event 2'
+            )
 
-    plt.show()
+            ax.plot(
+                data1.times('utcdatetime') - t1,
+                N(data1.data),
+                color='C0',
+                label='Event 1'
+            )
+
+            # Picks
+            ax.axvline(
+                0.0,
+                color='limegreen',
+                ls='--',
+                lw=1.2,
+                label='Corrected Pick (2)'
+            )
+
+            ax.axvline(
+                0.0,
+                0.05,
+                0.50,
+                color='C0',
+                lw=2
+            )
+
+            ax.axvline(
+                -offset,
+                0.55,
+                0.95,
+                color='#F97306',
+                lw=2
+            )
+
+            # Limits
+            mmin = min(data1.times('utcdatetime') - t1)
+            mmax = max(data1.times('utcdatetime') - t1)
+
+            mmin -= abs(0.02 * (mmax - mmin))
+            mmax += abs(0.02 * (mmax - mmin))
+
+            ax.set_xlim((mmin, mmax))
+
+            ax.set_xlabel(
+                "Time relative to trace start time (s)",
+                fontsize=10
+            )
+
+            ax.set_ylabel(
+                "Normalized amplitude",
+                fontsize=10
+            )
+
+            ax.grid(alpha=0.4)
+            ax.legend(
+                loc=4,
+                ncols=2,
+                fontsize=8
+            )
+
+        # Remove unused axes
+        for i in range(ntotal, nrows * ncols):
+            row = i // ncols
+            col = i % ncols
+            fig.delaxes(axs[row][col])
+
+        plt.tight_layout()
+
+        if args.save:
+            lp = args.low_pass
+            hp = args.high_pass
+
+            folder = "ref-waveforms"
+            os.makedirs(folder, exist_ok=True)
+
+            filename = os.path.join(folder, f"ref-wave-graphs_{ref}_{hp}-{lp}.png")
+            fig.savefig(filename, bbox_inches="tight")
+
+            if args.verbose:
+                print(f'I:> Save reference waveforms plot to {filename}')
+
+            plt.close(fig)
+
+        else:
+            plt.show()
+
     return None
 
 
@@ -1162,17 +1364,16 @@ def build_ref_waveform(data, results, labels, args):
 if __name__ == '__main__':
     # Call arguments
     args = cmdline()
-
-    #
     args.window = parse_phase(args.window)
 
-    if not args.matrix and not args.correlation and not args.waveform and not args.sac:
-        print('E:> Nothing to do', file = sys.stderr)
+    if not any((args.matrix, args.correlation, args.waveform, args.sac, args.histogram,
+                args.cluster is not None, args.ref == 'auto', args.ref_waveform)):
+        print('E:> Nothing to do', file=sys.stderr)
         sys.exit(1)
 
     ##
     # Load the data for each event given
-    ##
+
     data = []
     stop = False
     for event in args.events:
@@ -1204,6 +1405,18 @@ if __name__ == '__main__':
     if len(data) == 0:
         print(f'E:> No data was loaded!', file = sys.stderr)
         sys.exit(1)
+        
+    labels = [evid for evid, _, _ in data]
+
+    if args.ref not in (None, 'auto'):
+        refs = args.ref.split()
+        invalid = [ref for ref in refs if ref not in labels]
+
+        if invalid:
+            print(f"E:> Reference event(s) not found: {', '.join(invalid)}.", file=sys.stderr)
+            print("E:> Check for a typo or an invalid event ID.", file=sys.stderr)
+            print(f"E:> Loaded IDs: {' '.join(labels)}", file=sys.stderr)
+            sys.exit(2)
 
     if args.verbose:
         print(f'I:> A total of {len(data)} traces was found!')
@@ -1232,34 +1445,128 @@ if __name__ == '__main__':
         sys.exit(1)
 
     ##
-    # Compute matrix
-    ##
-    results, labels = build_corr_matrix(data, args)
+    # Decide which operations are needed
+
+    cluster_threshold = args.cluster if args.cluster is not None else 0.8
+    need_clusters = args.cluster is not None or args.ref == 'auto'
+    need_matrix = args.matrix or args.correlation or args.waveform or args.histogram or need_clusters
+
+    results = []
+    labels = [evid for evid, _, _ in data]
 
     ##
-    # Generate desired outputs
+    # Compute matrix only when needed
+
+    if need_matrix:
+        results, labels = build_corr_matrix(data, args)
+
+        if args.verbose and results:
+            values = np.array([r.M for r in results])
+            values = values[np.isfinite(values)]
+
+            if len(values):
+                print(f'I:> Mean correlation: {np.mean(values):.4f}')
+                print(f'I:> Mean absolute correlation: {np.mean(np.abs(values)):.4f}')
+
     ##
-    
-    # Matrix plot
+    # Identify clusters only when requested or required
+
+    clusters = []
+    auto_refs = []
+    ref_targets = None
+
+    if need_clusters:
+        clusters = select_corr_clusters(results, labels, threshold=cluster_threshold)
+
+        if args.cluster is not None:
+            if not clusters:
+                print('W:> No clusters found for the selected threshold.')
+
+            for i, cluster in enumerate(clusters, start=1):
+                print(f"\nCluster {i} ({len(cluster)} events)")
+                print(" ".join(cluster))
+
+        ##
+        # Select reference automatically
+
+        if args.ref == 'auto':
+            ref_targets = {}
+
+            for i, cluster in enumerate(clusters, start=1):
+                candidates = select_cluster_reference(cluster, results, labels, threshold=cluster_threshold)
+
+                if not candidates:
+                    continue
+
+                print(f"\nCluster {i} ({len(cluster)} events)")
+                print(f"{'Event':<18} {'Correlated':>12} {'Fraction':>10} {'Mean':>10} {'Minimum':>10}")
+
+                for candidate in candidates:
+                    print(f"{candidate['event']:<18} {candidate['n_correlated']:>5}/{candidate['n_compared']:<5} {candidate['fraction_correlated']:>9.1%} {candidate['mean_corr']:>10.3f} {candidate['min_corr']:>10.3f}")
+
+                ref = candidates[0]['event']
+                auto_refs.append(ref)
+                ref_targets[ref] = set(cluster) - {ref}
+
+                print(f"I:> Selected reference for cluster {i}: {ref}")
+
+    ##
+    # Restrict manually selected references to their clusters,
+    # but only when --cluster was explicitly requested
+
+    manual_refs = args.ref.split() if args.ref not in (None, 'auto') else []
+
+    if manual_refs and args.cluster is not None:
+        ref_targets = {}
+
+        for ref in manual_refs:
+            ref_cluster = next((cluster for cluster in clusters if ref in cluster), None)
+
+            if ref_cluster is None:
+                print(f"E:> Reference {ref} does not belong to a cluster at threshold {cluster_threshold}.", file=sys.stderr)
+                print("E:> Check the threshold or omit --cluster to compare this reference with all events.", file=sys.stderr)
+                sys.exit(2)
+
+            ref_targets[ref] = set(ref_cluster) - {ref}
+
+    ref_list = auto_refs if args.ref == 'auto' else manual_refs
+
+    ##
+    # Generate requested plots that use the full matrix
+
     if args.matrix:
         plot_matrix(data, results, labels, args)
 
-    # All graph plot
     if args.waveform:
         plot_waveforms(data, results, labels, args)
 
-    # Seismograms plot
     if args.correlation:
         plot_correlation(data, results, labels, args)
-        
-    # Histogram plot
-    if args.histogram and args.correction:
-        build_ref_corr(data, args)
-        
-    # SAC Output
-    if args.sac:
-        build_ref_corr(data, args)
-        build_ref_waveform(data, results, labels, args)
+
+    if args.histogram:
+        plot_hist(results, args, "all")
+
+    ##
+    # Compute reference correlations only when required
+
+    need_ref_corr = args.sac or args.ref_waveform or (args.histogram and bool(ref_list))
+
+    if need_ref_corr:
+        if not ref_list:
+            print('E:> No reference was selected. Check the threshold or the event correlations.', file=sys.stderr)
+            sys.exit(2)
+
+        ref_results = build_ref_corr(data, args, ref_list, ref_targets)
+
+        if args.histogram:
+            for ref in ref_list:
+                selected = [r for r in ref_results if data[r.i][0] == ref]
+
+                if selected:
+                    plot_hist(selected, args, ref)
+
+        if args.ref_waveform:
+            build_ref_waveform(data, ref_results, labels, args, ref_list, ref_targets)
 
     sys.exit(0)
     
