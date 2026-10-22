@@ -12,6 +12,7 @@
 import os, sys
 import argparse
 import numpy as np
+import pandas as pd
 import seaborn as sns
 
 from obspy import read
@@ -37,6 +38,9 @@ warnings.filterwarnings("ignore")
 # Frutal
 # python3 correlation.py -v -S BB19B -w P/0.25/3 -c -cs 0.1 $(awk '{print $1}' ../TG2/Code/Frutal.txt) -hp 8 -lp 15 -F http://10.110.0.134 --matrix --cluster 0.8 --histogram --save --sac --ref-waveform --ref usp2026cbmu
 # python3 correlation.py -v -c -cs 0.1 -S BB19B -w P/0.25/1  $(awk '{print $1}' ../TG2/Code/Frutal.txt) -hp 8 -lp 15 -F http://10.110.0.134  --matrix --save --histogram --sac --ref usp2026cbmu
+
+# Sete Lagoas
+# python3 correlation.py -v -S BSCB -w P/0.35/3 -c -cs 0.3 $(awk '{print $1}' ../TG2/Code/Sete.txt) -hp 2 -lp 10 -F http://10.110.0.134 --matrix --cluster 0.75 --histogram --save --sac --ref-waveform --ref
 
 # IO
 class LoadError(BaseException):
@@ -76,7 +80,7 @@ def cmdline():
                     help = 'Amount of shift allowed while searching for the max correlation in a given window.')
     
     g1.add_argument('--cluster', nargs='?', const=0.8, default=None, type=float, metavar='THRESHOLD',
-                help='Identify event clusters using the given correlation threshold.')
+                    help='Identify event clusters using the given correlation threshold.')
                 
 
     # Filters
@@ -114,7 +118,7 @@ def cmdline():
     g4.add_argument('--pair', type = str, default = None, 
                     help = 'Indicate correlation plot pair labels.')
                     
-    g4.add_argument('--histogram', action='store_true',
+    g4.add_argument('--histogram', action= 'store_true',
                     help='Show OFFSET histograms for all event pairs and selected references.')
 
     g4.add_argument('--waveform', action = 'store_true', 
@@ -124,7 +128,7 @@ def cmdline():
                     help = 'Number of columns in waveform plot.')
     
     g4.add_argument('--ref-waveform', action='store_true',
-                help='Show waveforms aligned to the selected reference events.')
+                    help='Show waveforms aligned to the selected reference events.')
 
     g4.add_argument('--save', action = 'store_true',
                     help = 'Instead of showing in screen, save to disk images.')
@@ -135,9 +139,12 @@ def cmdline():
 
     g5.add_argument('--sac', action= 'store_true',
                     help = 'Store corrected pick in a SAC file')
+                    
+    g5.add_argument('--csv', action= 'store_true',
+                    help = 'Write results parameters to a CSV file')
 
     g5.add_argument('--ref', nargs='?', const='auto', default=None, metavar='EVID',
-                help='Use an event as reference. Without an ID, select automatically.')
+                    help='Use an event as reference. Without an ID, select automatically.')
 
     # Process
     args = parser.parse_args()
@@ -219,7 +226,7 @@ def load_event(event, args):
         'S' : 't0'
     }
 
-    pick = tr = None
+    pick = tr = origin = None
 
     if os.path.isfile(event): # Load from FILE - must be SAC !
 
@@ -238,6 +245,9 @@ def load_event(event, args):
             raise LoadError(f"W:> File {event} does not have a {phase} pick on header variable 'T0'.")
 
         pick = tr.stats.starttime + tr.stats.sac[mappedphase] - tr.stats.sac.b
+        
+        if hasattr(tr.stats.sac, "o") and tr.stats.sac.o != -12345:
+            origin = tr.stats.starttime + tr.stats.sac.o - tr.stats.sac.b
 
         if tr.stats.sac.kevnm != "-12345":
             event = tr.stats.sac.kevnm
@@ -285,7 +295,8 @@ def load_event(event, args):
 
         E = evp[0]
         O = E.preferred_origin()
-
+        origin = O.time
+        
         # Find Arrival & Pick
         for A in O.arrivals:
             if A.time_weight <= 0.0: continue
@@ -340,6 +351,7 @@ def load_event(event, args):
     if args.verbose:
         print(f'I:> Loaded {event} = {tr.stats.network}.{tr.stats.station}.{tr.stats.location}.{tr.stats.channel} with {tr.stats.sampling_rate} sps and {phase} pick @ {pick}')
 
+    tr.stats.origin_time = origin
     return event, pick, tr
 
 
@@ -506,6 +518,8 @@ def build_corr_matrix(data, args):
                                 'j' : j,
                                 'data1' : data1,
                                 'data2' : data2,
+                                'origin1' : data1.stats.origin_time,
+                                'origin2' : data2.stats.origin_time,
                                 'lags' : lags,
                                 'corr' : corr,
                                 'lag_maxi' : lag_maxi,
@@ -521,6 +535,130 @@ def build_corr_matrix(data, args):
             # ~ data2.taper(max_percentage=0.5, type='hann', side='left')
             
     return results, [ evid for evid,_,_ in data ]
+
+
+def write_csv(data, results, args, filename='correlation_results.csv'):
+    """
+    Write pairwise correlation results to a CSV file.
+
+    Each event pair is stored as a separate block containing:
+        - Event IDs
+        - Pick times
+        - Origin times
+        - Correlation lag
+        - Correlation coefficient
+        - Offset
+
+    Parameters
+    ----------
+    data : list
+        List containing the event ID, pick time, and waveform
+        returned by load_event().
+
+    results : list
+        List of correlation results returned by build_corr_matrix().
+
+    args : argparse.Namespace
+        Parsed command-line arguments.
+
+    filename : str
+        Name of the output CSV file.
+    """
+
+    rows = []
+
+    def format_time(value):
+        """Convert a time to a string, preserving missing values."""
+        if value is None:
+            return ''
+        return str(value)
+
+    for index, result in enumerate(results):
+
+        # Retrieve event IDs, pick times, and original traces
+        evid1, pick1, trace1 = data[result.i]
+        evid2, pick2, trace2 = data[result.j]
+
+        # Retrieve origin times from the original traces
+        origin1 = getattr(trace1.stats, 'origin_time', None)
+        origin2 = getattr(trace2.stats, 'origin_time', None)
+
+        # Add a separator between event pairs
+        if index > 0:
+            rows.append(['', ''])
+
+        # Identify the event pair
+        rows.append([
+            f'{evid1} x {evid2}',
+            ''
+        ])
+
+        # Event 1
+        rows.append([
+            'Event ID 1',
+            evid1
+        ])
+
+        rows.append([
+            'Pick 1 time',
+            format_time(pick1)
+        ])
+
+        rows.append([
+            'Origin time 1',
+            format_time(origin1)
+        ])
+
+        # Event 2
+        rows.append([
+            'Event ID 2',
+            evid2
+        ])
+
+        rows.append([
+            'Pick 2 time',
+            format_time(pick2)
+        ])
+
+        rows.append([
+            'Origin time 2',
+            format_time(origin2)
+        ])
+
+        # Correlation results
+        rows.append([
+            'LAG',
+            result.lag_maxi
+        ])
+
+        rows.append([
+            'Corr value',
+            result.M
+        ])
+
+        rows.append([
+            'Offset',
+            result.OFFSET
+        ])
+
+    # Create the DataFrame
+    df = pd.DataFrame(
+        rows,
+        columns=['Field', 'Value']
+    )
+
+    # Export to CSV
+    df.to_csv(
+        filename,
+        index=False,
+        encoding='utf-8',
+        na_rep=''
+    )
+
+    if args.verbose:
+        print(f'I:> Correlation results saved to {filename}')
+
+    return filename
 
 
 def select_corr_clusters(results, labels, threshold=0.8, min_size=4):
@@ -772,7 +910,6 @@ def plot_waveforms(data, results, labels, args):
                             figsize=(ncols * 5, nrows * 3),
                             squeeze=False)
 
-    # Working ...
     cont = 0
     for row in range(nrows):
         for col in range(ncols):
@@ -1036,15 +1173,15 @@ def write_to_SAC(data, result, output_dir="SAC"):
     if os.path.exists(filepath):
         print(
             f"I:> SAC written: {filepath}\n"
-            f"I:>   Event 1       : {evid1}\n"
-            f"I:>   Event 2       : {evid2}\n"
-            f"I:>   Original P    : {pick_original}\n"
-            f"I:>   Corrected P   : {pick_corrected}\n"
-            f"I:>   T1            : {t1:.6f} s\n"
-            f"I:>   T2            : {t2:.6f} s\n"
-            f"I:>   OFFSET        : {result.OFFSET:+.6f} s\n"
-            f"I:>   CC before     : {result.M_before:.6f}\n"
-            f"I:>   CC after      : {result.M:.6f}"
+            f"I:>   Event 1          : {evid1}\n"
+            f"I:>   Event 2          : {evid2}\n"
+            f"I:>   Original P       : {pick_original}\n"
+            f"I:>   Corrected P      : {pick_corrected}\n"
+            f"I:>   T1               : {t1:.6f} s\n"
+            f"I:>   T2               : {t2:.6f} s\n"
+            f"I:>   OFFSET    (USER0): {result.OFFSET:+.6f} s\n"
+            f"I:>   CC before (USER1): {result.M_before:.6f}\n"
+            f"I:>   CC after  (USER2): {result.M:.6f}"
         )
 
     return filepath
@@ -1460,6 +1597,9 @@ if __name__ == '__main__':
 
     if need_matrix:
         results, labels = build_corr_matrix(data, args)
+        
+        if args.csv:
+            write_csv(data, results, args)
 
         if args.verbose and results:
             values = np.array([r.M for r in results])
